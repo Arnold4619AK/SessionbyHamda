@@ -1,0 +1,570 @@
+{
+  "entities": {
+    "UserPublicProfile": {
+      "title": "UserPublicProfile",
+      "description": "Non-PII public profile for an authenticated customer or doctor/admin.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the user.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name of the user.",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "role": {
+          "type": "string",
+          "description": "User role within the platform.",
+          "enum": ["client", "therapist"]
+        },
+        "timezone": {
+          "type": "string",
+          "description": "Preferred IANA timezone string.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        }
+      },
+      "required": ["uid", "displayName", "role", "timezone", "createdAt", "updatedAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Strictly isolated PII document for an individual customer.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "User email address for automated confirmations.",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "phone": {
+          "type": "string",
+          "description": "Contact phone number.",
+          "minLength": 5,
+          "maxLength": 32
+        },
+        "emergencyContact": {
+          "type": "string",
+          "description": "Emergency contact name and phone.",
+          "minLength": 0,
+          "maxLength": 160
+        },
+        "emailRemindersEnabled": {
+          "type": "boolean",
+          "description": "Whether automated 24h and 1h email reminders are enabled."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of update."
+        }
+      },
+      "required": ["uid", "email", "phone", "emergencyContact", "emailRemindersEnabled", "updatedAt"]
+    },
+    "Appointment": {
+      "title": "Appointment",
+      "description": "A booked therapy session with Hamda Zubair and Razorpay payment reference.",
+      "type": "object",
+      "properties": {
+        "appointmentId": {
+          "type": "string",
+          "description": "Unique appointment identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "clientId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the customer.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "therapistId": {
+          "type": "string",
+          "description": "Identifier of the clinician (hamda_zubair).",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "therapistName": {
+          "type": "string",
+          "description": "Full name of the clinician.",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "clientName": {
+          "type": "string",
+          "description": "Name or alias of the customer.",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "sessionDate": {
+          "type": "string",
+          "description": "ISO date string YYYY-MM-DD.",
+          "minLength": 10,
+          "maxLength": 10
+        },
+        "sessionTime": {
+          "type": "string",
+          "description": "Formatted time slot e.g. 11:00 AM IST.",
+          "minLength": 3,
+          "maxLength": 32
+        },
+        "sessionType": {
+          "type": "string",
+          "description": "Modality of the session.",
+          "enum": ["video", "audio", "couples_video"]
+        },
+        "durationMinutes": {
+          "type": "number",
+          "description": "Length of session in minutes (45, 50, 60, or 80)."
+        },
+        "amountInr": {
+          "type": "number",
+          "description": "Session fee paid via Razorpay in INR."
+        },
+        "paymentStatus": {
+          "type": "string",
+          "description": "Razorpay payment verification status.",
+          "enum": ["paid", "refunded"]
+        },
+        "paymentReference": {
+          "type": "string",
+          "description": "Razorpay payment ID e.g. pay_...",
+          "minLength": 4,
+          "maxLength": 64
+        },
+        "status": {
+          "type": "string",
+          "description": "Lifecycle state of the appointment.",
+          "enum": ["confirmed", "rescheduled", "completed", "cancelled"]
+        },
+        "meetingRoomCode": {
+          "type": "string",
+          "description": "Video consultation room identifier.",
+          "minLength": 4,
+          "maxLength": 64
+        },
+        "emailConfirmationSent": {
+          "type": "boolean",
+          "description": "Whether automated confirmation message was dispatched."
+        },
+        "reminderScheduled": {
+          "type": "boolean",
+          "description": "Whether automated reminder is queued."
+        },
+        "concernFocus": {
+          "type": "string",
+          "description": "Primary session type or focus selected during booking.",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when booked."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last status update."
+        }
+      },
+      "required": [
+        "appointmentId",
+        "clientId",
+        "therapistId",
+        "therapistName",
+        "clientName",
+        "sessionDate",
+        "sessionTime",
+        "sessionType",
+        "durationMinutes",
+        "amountInr",
+        "paymentStatus",
+        "paymentReference",
+        "status",
+        "meetingRoomCode",
+        "emailConfirmationSent",
+        "reminderScheduled",
+        "concernFocus",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "EncryptedPatientRecord": {
+      "title": "EncryptedPatientRecord",
+      "description": "Background-encrypted patient clinical note or reflection.",
+      "type": "object",
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "description": "Unique record ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the record owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "therapistId": {
+          "type": "string",
+          "description": "Assigned therapist ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Label for the record.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "category": {
+          "type": "string",
+          "description": "Type of record.",
+          "enum": ["clinical_intake", "session_reflection", "safety_plan", "mood_journal"]
+        },
+        "cipherText": {
+          "type": "string",
+          "description": "Base64-encoded AES-256-GCM encrypted payload.",
+          "minLength": 12,
+          "maxLength": 8192
+        },
+        "iv": {
+          "type": "string",
+          "description": "Base64-encoded 96-bit initialization vector.",
+          "minLength": 8,
+          "maxLength": 64
+        },
+        "salt": {
+          "type": "string",
+          "description": "Base64-encoded PBKDF2 key derivation salt.",
+          "minLength": 8,
+          "maxLength": 64
+        },
+        "encryptionAlgorithm": {
+          "type": "string",
+          "description": "Cryptographic cipher identifier.",
+          "enum": ["AES-256-GCM"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        }
+      },
+      "required": [
+        "recordId",
+        "ownerId",
+        "therapistId",
+        "title",
+        "category",
+        "cipherText",
+        "iv",
+        "salt",
+        "encryptionAlgorithm",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AvailabilitySlot": {
+      "title": "AvailabilitySlot",
+      "description": "Calendar availability slot for Hamda Zubair.",
+      "type": "object",
+      "properties": {
+        "slotId": {
+          "type": "string",
+          "description": "Unique slot identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "therapistId": {
+          "type": "string",
+          "description": "Therapist identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the managing user.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "dateStr": {
+          "type": "string",
+          "description": "ISO date YYYY-MM-DD.",
+          "minLength": 10,
+          "maxLength": 10
+        },
+        "startTime": {
+          "type": "string",
+          "description": "Slot start time e.g. 10:00 AM IST.",
+          "minLength": 3,
+          "maxLength": 32
+        },
+        "endTime": {
+          "type": "string",
+          "description": "Slot end time e.g. 10:50 AM IST.",
+          "minLength": 3,
+          "maxLength": 32
+        },
+        "isBooked": {
+          "type": "boolean",
+          "description": "Whether the slot has been reserved."
+        },
+        "googleCalSynced": {
+          "type": "boolean",
+          "description": "Whether synced with external calendar."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of update."
+        }
+      },
+      "required": [
+        "slotId",
+        "therapistId",
+        "ownerUid",
+        "dateStr",
+        "startTime",
+        "endTime",
+        "isBooked",
+        "googleCalSynced",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "EmailDispatch": {
+      "title": "EmailDispatch",
+      "description": "Automated appointment email and reminder message record.",
+      "type": "object",
+      "properties": {
+        "dispatchId": {
+          "type": "string",
+          "description": "Unique dispatch ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "recipientUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the recipient.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "appointmentId": {
+          "type": "string",
+          "description": "Associated appointment ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "emailType": {
+          "type": "string",
+          "description": "Category of automated notification.",
+          "enum": ["booking_confirmation", "reminder_24h", "reminder_1h", "reschedule_notice"]
+        },
+        "subject": {
+          "type": "string",
+          "description": "Reminder message or email subject line.",
+          "minLength": 3,
+          "maxLength": 180
+        },
+        "recipientMasked": {
+          "type": "string",
+          "description": "Masked email address for non-PII display.",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "deliveryStatus": {
+          "type": "string",
+          "description": "Dispatch status.",
+          "enum": ["delivered", "scheduled"]
+        },
+        "scheduledFor": {
+          "type": "string",
+          "description": "Human-readable dispatch schedule.",
+          "minLength": 3,
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of log creation."
+        }
+      },
+      "required": [
+        "dispatchId",
+        "recipientUid",
+        "appointmentId",
+        "emailType",
+        "subject",
+        "recipientMasked",
+        "deliveryStatus",
+        "scheduledFor",
+        "createdAt"
+      ]
+    },
+    "ReminderSetting": {
+      "title": "ReminderSetting",
+      "description": "Customizable reminder message setup for appointments.",
+      "type": "object",
+      "properties": {
+        "settingId": {
+          "type": "string",
+          "description": "Document ID (matches ownerUid).",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "confirmationTemplate": {
+          "type": "string",
+          "description": "Custom message template sent immediately upon booking.",
+          "minLength": 5,
+          "maxLength": 600
+        },
+        "reminder24hTemplate": {
+          "type": "string",
+          "description": "Custom message template sent 24 hours before the session.",
+          "minLength": 5,
+          "maxLength": 600
+        },
+        "reminder1hTemplate": {
+          "type": "string",
+          "description": "Custom message template sent 1 hour before the session.",
+          "minLength": 5,
+          "maxLength": 600
+        },
+        "emailChannelEnabled": {
+          "type": "boolean",
+          "description": "Whether email reminders are active."
+        },
+        "whatsappChannelEnabled": {
+          "type": "boolean",
+          "description": "Whether WhatsApp/SMS reminder alerts are active."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        }
+      },
+      "required": [
+        "settingId",
+        "ownerUid",
+        "confirmationTemplate",
+        "reminder24hTemplate",
+        "reminder1hTemplate",
+        "emailChannelEnabled",
+        "whatsappChannelEnabled",
+        "updatedAt"
+      ]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted administrator lookup document.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Admin Firebase Auth UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp."
+        }
+      },
+      "required": ["uid", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserPublicProfile" },
+      "description": "Public non-PII user profiles."
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Strictly isolated PII user contact and reminder settings."
+    },
+    "/appointments/{appointmentId}": {
+      "schema": { "$ref": "#/entities/Appointment" },
+      "description": "Booked therapy sessions with Razorpay reference and video consultation codes."
+    },
+    "/encryptedRecords/{recordId}": {
+      "schema": { "$ref": "#/entities/EncryptedPatientRecord" },
+      "description": "Background-encrypted patient clinical notes and reflections."
+    },
+    "/therapistAvailability/{slotId}": {
+      "schema": { "$ref": "#/entities/AvailabilitySlot" },
+      "description": "Hamda Zubair calendar availability slots."
+    },
+    "/emailDispatches/{dispatchId}": {
+      "schema": { "$ref": "#/entities/EmailDispatch" },
+      "description": "Automated email confirmation and reminder dispatch logs."
+    },
+    "/reminderSettings/{settingId}": {
+      "schema": { "$ref": "#/entities/ReminderSetting" },
+      "description": "Configured reminder message templates and channel settings."
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Administrator registry."
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Home of Emotions — Therapy & Emotional Wellness",
+  "description": "Book confidential 1-on-1 video therapy sessions with licensed clinical psychologists, manage therapist calendar availability, process session payments, and maintain AES-256 encrypted client records.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

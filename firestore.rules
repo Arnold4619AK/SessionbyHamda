@@ -1,0 +1,477 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // Phase 3: Hardened Global Helpers
+    // =========================================================================
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'Arnoldkavungal11@gmail.com' ||
+        request.auth.token.email == 'hamda.connect@gmail.com'
+      );
+    }
+
+    // =========================================================================
+    // Validation Blueprints (Pillar 2: Anti-Update-Gap)
+    // =========================================================================
+
+    function isValidUserPublicProfile(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'role', 'timezone', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'displayName', 'role', 'timezone', 'createdAt', 'updatedAt']) &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.uid == request.auth.uid &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+        data.role is string && data.role.size() <= 20 && (data.role == 'client' || data.role == 'therapist') &&
+        data.timezone is string && data.timezone.size() >= 1 && data.timezone.size() <= 64 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivateInfo(data) {
+      return data.keys().hasAll(['uid', 'email', 'phone', 'emergencyContact', 'emailRemindersEnabled', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'phone', 'emergencyContact', 'emailRemindersEnabled', 'updatedAt']) &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.uid == request.auth.uid &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.phone is string && data.phone.size() >= 5 && data.phone.size() <= 32 &&
+        data.emergencyContact is string && data.emergencyContact.size() <= 160 &&
+        data.emailRemindersEnabled is bool &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAppointment(data) {
+      return data.keys().hasAll([
+          'appointmentId', 'clientId', 'therapistId', 'therapistName', 'clientName',
+          'sessionDate', 'sessionTime', 'sessionType', 'durationMinutes', 'amountInr',
+          'paymentStatus', 'paymentReference', 'status', 'meetingRoomCode',
+          'emailConfirmationSent', 'reminderScheduled', 'concernFocus', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'appointmentId', 'clientId', 'therapistId', 'therapistName', 'clientName',
+          'sessionDate', 'sessionTime', 'sessionType', 'durationMinutes', 'amountInr',
+          'paymentStatus', 'paymentReference', 'status', 'meetingRoomCode',
+          'emailConfirmationSent', 'reminderScheduled', 'concernFocus', 'createdAt', 'updatedAt'
+        ]) &&
+        data.appointmentId is string && data.appointmentId.size() >= 1 && data.appointmentId.size() <= 128 && data.appointmentId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.clientId is string && data.clientId.size() >= 1 && data.clientId.size() <= 128 && data.clientId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.therapistId is string && data.therapistId.size() >= 1 && data.therapistId.size() <= 128 && data.therapistId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.therapistName is string && data.therapistName.size() >= 1 && data.therapistName.size() <= 100 &&
+        data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 100 &&
+        data.sessionDate is string && data.sessionDate.size() == 10 &&
+        data.sessionTime is string && data.sessionTime.size() >= 3 && data.sessionTime.size() <= 32 &&
+        data.sessionType is string && data.sessionType.size() <= 20 &&
+        (data.sessionType == 'video' || data.sessionType == 'audio' || data.sessionType == 'couples_video') &&
+        data.durationMinutes is int &&
+        (data.durationMinutes == 45 || data.durationMinutes == 50 || data.durationMinutes == 60 || data.durationMinutes == 80) &&
+        data.amountInr is int && data.amountInr >= 500 && data.amountInr <= 25000 &&
+        data.paymentStatus is string && data.paymentStatus.size() <= 20 &&
+        (data.paymentStatus == 'paid' || data.paymentStatus == 'refunded') &&
+        data.paymentReference is string && data.paymentReference.size() >= 4 && data.paymentReference.size() <= 64 &&
+        data.status is string && data.status.size() <= 20 &&
+        (data.status == 'confirmed' || data.status == 'rescheduled' || data.status == 'completed' || data.status == 'cancelled') &&
+        data.meetingRoomCode is string && data.meetingRoomCode.size() >= 4 && data.meetingRoomCode.size() <= 64 &&
+        data.emailConfirmationSent is bool &&
+        data.reminderScheduled is bool &&
+        data.concernFocus is string && data.concernFocus.size() >= 1 && data.concernFocus.size() <= 240 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidEncryptedRecord(data) {
+      return data.keys().hasAll([
+          'recordId', 'ownerId', 'therapistId', 'title', 'category',
+          'cipherText', 'iv', 'salt', 'encryptionAlgorithm', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'recordId', 'ownerId', 'therapistId', 'title', 'category',
+          'cipherText', 'iv', 'salt', 'encryptionAlgorithm', 'createdAt', 'updatedAt'
+        ]) &&
+        data.recordId is string && data.recordId.size() >= 1 && data.recordId.size() <= 128 && data.recordId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.ownerId == request.auth.uid &&
+        data.therapistId is string && data.therapistId.size() >= 1 && data.therapistId.size() <= 128 && data.therapistId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+        data.category is string && data.category.size() <= 32 &&
+        (data.category == 'clinical_intake' || data.category == 'session_reflection' || data.category == 'safety_plan' || data.category == 'mood_journal') &&
+        data.cipherText is string && data.cipherText.size() >= 12 && data.cipherText.size() <= 8192 &&
+        data.iv is string && data.iv.size() >= 8 && data.iv.size() <= 64 &&
+        data.salt is string && data.salt.size() >= 8 && data.salt.size() <= 64 &&
+        data.encryptionAlgorithm is string && data.encryptionAlgorithm.size() == 11 && data.encryptionAlgorithm == 'AES-256-GCM' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAvailabilitySlot(data) {
+      return data.keys().hasAll([
+          'slotId', 'therapistId', 'ownerUid', 'dateStr', 'startTime',
+          'endTime', 'isBooked', 'googleCalSynced', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'slotId', 'therapistId', 'ownerUid', 'dateStr', 'startTime',
+          'endTime', 'isBooked', 'googleCalSynced', 'createdAt', 'updatedAt'
+        ]) &&
+        data.slotId is string && data.slotId.size() >= 1 && data.slotId.size() <= 128 && data.slotId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.therapistId is string && data.therapistId.size() >= 1 && data.therapistId.size() <= 128 && data.therapistId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 && data.ownerUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.dateStr is string && data.dateStr.size() == 10 &&
+        data.startTime is string && data.startTime.size() >= 3 && data.startTime.size() <= 32 &&
+        data.endTime is string && data.endTime.size() >= 3 && data.endTime.size() <= 32 &&
+        data.isBooked is bool &&
+        data.googleCalSynced is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidEmailDispatch(data) {
+      return data.keys().hasAll([
+          'dispatchId', 'recipientUid', 'appointmentId', 'emailType',
+          'subject', 'recipientMasked', 'deliveryStatus', 'scheduledFor', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'dispatchId', 'recipientUid', 'appointmentId', 'emailType',
+          'subject', 'recipientMasked', 'deliveryStatus', 'scheduledFor', 'createdAt'
+        ]) &&
+        data.dispatchId is string && data.dispatchId.size() >= 1 && data.dispatchId.size() <= 128 && data.dispatchId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.recipientUid is string && data.recipientUid.size() >= 1 && data.recipientUid.size() <= 128 && data.recipientUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.recipientUid == request.auth.uid &&
+        data.appointmentId is string && data.appointmentId.size() >= 1 && data.appointmentId.size() <= 128 && data.appointmentId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.emailType is string && data.emailType.size() <= 32 &&
+        (data.emailType == 'booking_confirmation' || data.emailType == 'reminder_24h' || data.emailType == 'reminder_1h' || data.emailType == 'reschedule_notice') &&
+        data.subject is string && data.subject.size() >= 3 && data.subject.size() <= 180 &&
+        data.recipientMasked is string && data.recipientMasked.size() >= 3 && data.recipientMasked.size() <= 120 &&
+        data.deliveryStatus is string && data.deliveryStatus.size() <= 20 &&
+        (data.deliveryStatus == 'delivered' || data.deliveryStatus == 'scheduled') &&
+        data.scheduledFor is string && data.scheduledFor.size() >= 3 && data.scheduledFor.size() <= 64 &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidReminderSetting(data) {
+      return data.keys().hasAll([
+          'settingId', 'ownerUid', 'confirmationTemplate', 'reminder24hTemplate',
+          'reminder1hTemplate', 'emailChannelEnabled', 'whatsappChannelEnabled', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'settingId', 'ownerUid', 'confirmationTemplate', 'reminder24hTemplate',
+          'reminder1hTemplate', 'emailChannelEnabled', 'whatsappChannelEnabled', 'updatedAt'
+        ]) &&
+        data.settingId is string && data.settingId.size() >= 1 && data.settingId.size() <= 128 && data.settingId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 && data.ownerUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.ownerUid == request.auth.uid &&
+        data.confirmationTemplate is string && data.confirmationTemplate.size() >= 5 && data.confirmationTemplate.size() <= 600 &&
+        data.reminder24hTemplate is string && data.reminder24hTemplate.size() >= 5 && data.reminder24hTemplate.size() <= 600 &&
+        data.reminder1hTemplate is string && data.reminder1hTemplate.size() >= 5 && data.reminder1hTemplate.size() <= 600 &&
+        data.emailChannelEnabled is bool &&
+        data.whatsappChannelEnabled is bool &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll(['uid', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'createdAt']) &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.createdAt is timestamp;
+    }
+
+    // =========================================================================
+    // Collection Rules
+    // =========================================================================
+
+    match /test/{docId} {
+      allow get: if isValidId(docId);
+      allow list, create, update, delete: if false;
+    }
+
+    // 1. Users Public Profile (/users/{userId})
+    match /users/{userId} {
+      allow get: if isVerifiedUser() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow list: if isVerifiedUser() && resource.data.uid == request.auth.uid;
+
+      allow create: if isVerifiedUser() &&
+        isValidId(userId) &&
+        userId == request.auth.uid &&
+        isValidUserPublicProfile(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidId(userId) &&
+        isValidUserPublicProfile(incoming()) && (
+          isAdmin() || (
+            request.auth.uid == userId &&
+            incoming().uid == existing().uid &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'role', 'timezone', 'updatedAt'])
+          )
+        );
+
+      allow delete: if false;
+
+      // 1b. Users Private PII Subcollection (/users/{userId}/private/{docId})
+      // Strictly isolated to the individual customer (owner)
+      match /private/{docId} {
+        allow get: if isVerifiedUser() &&
+          isValidId(userId) &&
+          isValidId(docId) &&
+          (request.auth.uid == userId || isAdmin()) &&
+          exists(/databases/$(database)/documents/users/$(userId));
+
+        allow list: if false;
+
+        allow create: if isVerifiedUser() &&
+          isValidId(userId) &&
+          isValidId(docId) &&
+          userId == request.auth.uid &&
+          docId == 'info' &&
+          isValidUserPrivateInfo(incoming()) &&
+          incoming().updatedAt == request.time &&
+          exists(/databases/$(database)/documents/users/$(userId));
+
+        allow update: if isVerifiedUser() &&
+          isValidId(userId) &&
+          isValidId(docId) &&
+          isValidUserPrivateInfo(incoming()) && (
+            isAdmin() || (
+              request.auth.uid == userId &&
+              docId == 'info' &&
+              incoming().uid == existing().uid &&
+              incoming().updatedAt == request.time &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['email', 'phone', 'emergencyContact', 'emailRemindersEnabled', 'updatedAt']) &&
+              exists(/databases/$(database)/documents/users/$(userId))
+            )
+          );
+
+        allow delete: if false;
+      }
+    }
+
+    // 2. Appointments (/appointments/{appointmentId})
+    match /appointments/{appointmentId} {
+      allow get: if isVerifiedUser() &&
+        isValidId(appointmentId) &&
+        (existing().clientId == request.auth.uid || existing().therapistId == request.auth.uid || isAdmin());
+
+      allow list: if isVerifiedUser() &&
+        (resource.data.clientId == request.auth.uid || resource.data.therapistId == request.auth.uid);
+
+      allow create: if isVerifiedUser() &&
+        isValidId(appointmentId) &&
+        incoming().appointmentId == appointmentId &&
+        incoming().clientId == request.auth.uid &&
+        isValidAppointment(incoming()) &&
+        incoming().status == 'confirmed' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid));
+
+      allow update: if isVerifiedUser() &&
+        isValidId(appointmentId) &&
+        isValidAppointment(incoming()) && (
+          isAdmin() || (
+            existing().status != 'completed' &&
+            existing().status != 'cancelled' &&
+            incoming().appointmentId == existing().appointmentId &&
+            incoming().clientId == existing().clientId &&
+            incoming().therapistId == existing().therapistId &&
+            incoming().amountInr == existing().amountInr &&
+            incoming().paymentReference == existing().paymentReference &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time &&
+            exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+              // Action 1: Reschedule appointment date/time
+              (
+                (existing().clientId == request.auth.uid || existing().therapistId == request.auth.uid) &&
+                incoming().status == 'rescheduled' &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['sessionDate', 'sessionTime', 'status', 'updatedAt'])
+              ) ||
+              // Action 2: Complete or Cancel appointment
+              (
+                (existing().clientId == request.auth.uid || existing().therapistId == request.auth.uid) &&
+                (incoming().status == 'completed' || incoming().status == 'cancelled' || incoming().paymentStatus == 'refunded') &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['status', 'paymentStatus', 'updatedAt'])
+              ) ||
+              // Action 3: Toggle automated reminder flag
+              (
+                (existing().clientId == request.auth.uid || existing().therapistId == request.auth.uid) &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['reminderScheduled', 'updatedAt'])
+              )
+            )
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    // 3. Encrypted Patient Records (/encryptedRecords/{recordId})
+    match /encryptedRecords/{recordId} {
+      allow get: if isVerifiedUser() &&
+        isValidId(recordId) &&
+        (existing().ownerId == request.auth.uid || existing().therapistId == request.auth.uid || isAdmin());
+
+      allow list: if isVerifiedUser() &&
+        (resource.data.ownerId == request.auth.uid || resource.data.therapistId == request.auth.uid);
+
+      allow create: if isVerifiedUser() &&
+        isValidId(recordId) &&
+        incoming().recordId == recordId &&
+        isValidEncryptedRecord(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid));
+
+      allow update: if isVerifiedUser() &&
+        isValidId(recordId) &&
+        isValidEncryptedRecord(incoming()) && (
+          isAdmin() || (
+            existing().ownerId == request.auth.uid &&
+            incoming().recordId == existing().recordId &&
+            incoming().ownerId == existing().ownerId &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['title', 'category', 'cipherText', 'iv', 'salt', 'updatedAt']) &&
+            exists(/databases/$(database)/documents/users/$(request.auth.uid))
+          )
+        );
+
+      allow delete: if isVerifiedUser() &&
+        isValidId(recordId) &&
+        (existing().ownerId == request.auth.uid || isAdmin());
+    }
+
+    // 4. Therapist Calendar Availability Slots (/therapistAvailability/{slotId})
+    match /therapistAvailability/{slotId} {
+      allow get: if isSignedIn() &&
+        isValidId(slotId) &&
+        (existing().isBooked == false || existing().ownerUid == request.auth.uid || isAdmin());
+
+      allow list: if isSignedIn() &&
+        (resource.data.isBooked == false || resource.data.ownerUid == request.auth.uid);
+
+      allow create: if isVerifiedUser() &&
+        isValidId(slotId) &&
+        incoming().slotId == slotId &&
+        incoming().ownerUid == request.auth.uid &&
+        isValidAvailabilitySlot(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid));
+
+      allow update: if isVerifiedUser() &&
+        isValidId(slotId) &&
+        isValidAvailabilitySlot(incoming()) && (
+          isAdmin() || (
+            incoming().slotId == existing().slotId &&
+            incoming().ownerUid == existing().ownerUid &&
+            incoming().therapistId == existing().therapistId &&
+            incoming().createdAt == existing().createdAt &&
+            incoming().updatedAt == request.time &&
+            exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+              (
+                existing().ownerUid == request.auth.uid &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['isBooked', 'googleCalSynced', 'startTime', 'endTime', 'updatedAt'])
+              ) ||
+              (
+                existing().isBooked == false &&
+                incoming().isBooked == true &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['isBooked', 'updatedAt'])
+              )
+            )
+          )
+        );
+
+      allow delete: if isVerifiedUser() &&
+        isValidId(slotId) &&
+        (existing().ownerUid == request.auth.uid || isAdmin());
+    }
+
+    // 5. Automated Email Dispatches (/emailDispatches/{dispatchId})
+    match /emailDispatches/{dispatchId} {
+      allow get: if isVerifiedUser() &&
+        isValidId(dispatchId) &&
+        (existing().recipientUid == request.auth.uid || isAdmin());
+
+      allow list: if isVerifiedUser() &&
+        resource.data.recipientUid == request.auth.uid;
+
+      allow create: if isVerifiedUser() &&
+        isValidId(dispatchId) &&
+        incoming().dispatchId == dispatchId &&
+        isValidEmailDispatch(incoming()) &&
+        incoming().createdAt == request.time &&
+        exists(/databases/$(database)/documents/appointments/$(incoming().appointmentId));
+
+      allow update, delete: if false;
+    }
+
+    // 6. Reminder Message Setups (/reminderSettings/{settingId})
+    match /reminderSettings/{settingId} {
+      allow get: if isVerifiedUser() &&
+        isValidId(settingId) &&
+        (request.auth.uid == settingId || isAdmin());
+
+      allow list: if isVerifiedUser() &&
+        resource.data.ownerUid == request.auth.uid;
+
+      allow create: if isVerifiedUser() &&
+        isValidId(settingId) &&
+        settingId == request.auth.uid &&
+        isValidReminderSetting(incoming()) &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid));
+
+      allow update: if isVerifiedUser() &&
+        isValidId(settingId) &&
+        isValidReminderSetting(incoming()) && (
+          isAdmin() || (
+            request.auth.uid == settingId &&
+            incoming().settingId == existing().settingId &&
+            incoming().ownerUid == existing().ownerUid &&
+            incoming().updatedAt == request.time &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'confirmationTemplate', 'reminder24hTemplate', 'reminder1hTemplate',
+              'emailChannelEnabled', 'whatsappChannelEnabled', 'updatedAt'
+            ]) &&
+            exists(/databases/$(database)/documents/users/$(request.auth.uid))
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    // 7. Admins Registry (/admins/{adminId})
+    match /admins/{adminId} {
+      allow get: if isVerifiedUser() && isValidId(adminId) && (request.auth.uid == adminId || isAdmin());
+      allow list: if false;
+      allow create, update: if isAdmin() && isValidId(adminId) && isValidAdminRecord(incoming());
+      allow delete: if false;
+    }
+  }
+}
