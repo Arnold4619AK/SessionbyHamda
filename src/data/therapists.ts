@@ -75,14 +75,16 @@ export const HAMDA_PROFILE = {
 };
 
 export const HAMDA_PAYMENT_DETAILS = {
-  payeeName: 'Hamda Zubair — Neuropsychology & Behavioral Practice',
-  upiId: 'hamdazubair@okaxis',
-  secondaryUpiId: 'hamda.connect@okicici',
-  bankName: 'HDFC Bank · Banjara Hills Branch, Hyderabad',
-  accountHolder: 'Hamda Zubair',
-  accountNumber: '50100482910472',
-  ifscCode: 'HDFC0000512',
-  accountType: 'Current / Professional Practice Account',
+  payeeName: 'FATHIMA HAMDA',
+  upiId: 'hamdazubair121-1@okaxis',
+  secondaryUpiId: '9744492939@kotak',
+  qrImagePath: '/assets/aistudio/Screenshot_2026-10-26_005601_f47921d7.png',
+  bankName: 'Kotak Mahindra',
+  accountHolder: 'FATHIMA HAMDA',
+  accountNumber: '6447312720',
+  ifscCode: 'KKBK0008083',
+  upiHandle: '9744492939@kotak',
+  accountType: 'Savings / Clinical Practice Account',
 };
 
 export const HAMDA_SESSION_OFFERINGS: SessionOffering[] = [

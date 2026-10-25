@@ -218,36 +218,169 @@
 .receipt-meta-row strong {
   color: #263e32;
 }
-.admin-action-btn-sm {
+
+/* Filter pills at top of Records tab */
+.admin-filter-pill {
   border: 1px solid #c9d8c8;
   background: #f5f8f4;
   border-radius: 6px;
-  padding: 5px 9px;
+  padding: 5px 10px;
   font-size: 10px;
   font-weight: 700;
   color: #3b5c49;
   cursor: pointer;
   transition: all 0.15s;
 }
-.admin-action-btn-sm:hover {
+.admin-filter-pill:hover {
   background: #e6ede4;
   border-color: #a8bfa6;
 }
+.admin-filter-pill.active {
+  background: #234d3e;
+  border-color: #1a3c30;
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(35, 77, 62, 0.2);
+}
+
+/* Row Action Buttons in Records List */
+.admin-action-btn-sm {
+  border: 1px solid #c9d8c8;
+  background: #ffffff;
+  border-radius: 7px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #3b5c49;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  user-select: none;
+}
+.admin-action-btn-sm:hover {
+  background: #f0f5ee;
+  border-color: #a8bfa6;
+  color: #274435;
+}
 .admin-action-btn-sm.confirm {
-  background: #e2f4e5;
-  border-color: #9cd4a6;
-  color: #246533;
+  background: linear-gradient(135deg, #15803d 0%, #166534 100%);
+  border: 1px solid #14532d;
+  color: #ffffff;
+  box-shadow: 0 2px 5px rgba(21, 128, 61, 0.25);
 }
 .admin-action-btn-sm.confirm:hover {
-  background: #d1ecc4;
+  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(21, 128, 61, 0.35);
 }
+.admin-action-btn-sm.confirm:active {
+  transform: translateY(0);
+}
+
 .admin-action-btn-sm.reject {
-  background: #fef2f2;
-  border-color: #fca5a5;
-  color: #991b1b;
+  background: linear-gradient(135deg, #e11d48 0%, #be123c 100%);
+  border: 1px solid #9f1239;
+  color: #ffffff;
+  box-shadow: 0 2px 5px rgba(190, 18, 60, 0.25);
 }
 .admin-action-btn-sm.reject:hover {
-  background: #fee2e2;
+  background: linear-gradient(135deg, #f43f5e 0%, #e11d48 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(190, 18, 60, 0.35);
+}
+.admin-action-btn-sm.reject:active {
+  transform: translateY(0);
+}
+
+/* Modal Popup Confirmation Buttons */
+.admin-modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+.admin-modal-btn-cancel {
+  background: #ffffff;
+  color: #4b5563;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 9px 18px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.admin-modal-btn-cancel:hover {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+  color: #1f2937;
+}
+.admin-modal-btn-confirm {
+  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+  color: #ffffff;
+  border: 1px solid #14532d;
+  border-radius: 8px;
+  padding: 9px 22px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(22, 101, 52, 0.28);
+  transition: all 0.15s;
+}
+.admin-modal-btn-confirm:hover {
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(22, 101, 52, 0.38);
+}
+.admin-modal-btn-not-confirm {
+  background: linear-gradient(135deg, #e11d48 0%, #be123c 100%);
+  color: #ffffff;
+  border: 1px solid #9f1239;
+  border-radius: 8px;
+  padding: 9px 22px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(190, 18, 60, 0.28);
+  transition: all 0.15s;
+}
+.admin-modal-btn-not-confirm:hover {
+  background: linear-gradient(135deg, #f43f5e 0%, #e11d48 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(190, 18, 60, 0.38);
+}
+
+/* Inline Confirmation Popover ('there itself') */
+.inline-confirm-popover {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 9px;
+  padding: 6px 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  animation: fadeInPop 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.inline-confirm-popover.popover-confirm {
+  background: #f0fdf4;
+  border: 1.5px solid #86efac;
+}
+
+.inline-confirm-popover.popover-not-confirm {
+  background: #fff1f2;
+  border: 1.5px solid #fca5a5;
+}
+
+@keyframes fadeInPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 /* Photo and Profile Editor in Workspace */
@@ -1174,5 +1307,194 @@
   background: #c9d8c6;
   border-radius: 4px;
 }
+
+/* Booked Session Slots Styling */
+.time-btn.booked {
+  opacity: 0.55 !important;
+  background: #f5f6f3 !important;
+  border-color: #dbe2d8 !important;
+  color: #8c978f !important;
+  cursor: not-allowed !important;
+  pointer-events: none;
+}
+
+.time-btn.booked span:first-child {
+  text-decoration: line-through;
+  opacity: 0.8;
+}
+
+.slot-booked-tag {
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #991b1b;
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+  padding: 1px 5px;
+  border-radius: 4px;
+  line-height: 1.2;
+  margin-top: 2px;
+  display: inline-block;
+  text-decoration: none !important;
+}
+
+.slot.booked {
+  border-color: #fca5a5 !important;
+  background: #fff5f5 !important;
+  color: #991b1b !important;
+}
+
+.admin-slot-booked-dot {
+  display: block;
+  font-size: 8px;
+  font-weight: 700;
+  color: #b91c1c;
+  margin-top: 2px;
+}
+
+/* Admin Refresh & Live Sync Controls */
+.admin-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #ffffff;
+  border: 1px solid #d4dfd2;
+  border-radius: 7px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--green, #345d50);
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 1px 3px rgba(32, 53, 43, 0.05);
+  user-select: none;
+}
+
+.admin-refresh-btn:hover:not(:disabled) {
+  background: #f1f7ef;
+  border-color: #9ab89d;
+  color: #1b3a2c;
+  transform: translateY(-1px);
+}
+
+.admin-refresh-btn:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.spin-anim {
+  animation: spin 0.75s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.live-pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  animation: pulse-green 1.8s infinite;
+  display: inline-block;
+}
+
+@keyframes pulse-green {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 5px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+/* Save Buttons for Weekly Availability & Session Times */
+.admin-save-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: linear-gradient(135deg, #234d3e 0%, #17653a 100%);
+  color: #ffffff;
+  border: 1px solid #14532d;
+  border-radius: 9px;
+  padding: 10px 18px;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(23, 101, 58, 0.22);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+}
+
+.admin-save-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #183c2f 0%, #11502c 100%);
+  transform: translateY(-1.5px);
+  box-shadow: 0 6px 18px rgba(23, 101, 58, 0.32);
+}
+
+.admin-save-btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px rgba(23, 101, 58, 0.18);
+}
+
+.admin-save-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+/* Booking Card (Chosen Div) Live Real-Time Availability Syncing State */
+.booking-card {
+  position: relative;
+  transition: border-color 0.4s ease, box-shadow 0.4s ease, background 0.4s ease;
+}
+
+.booking-card.is-sync-flashing {
+  border-color: #22c55e !important;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.2), 0 16px 40px rgba(34, 197, 94, 0.12) !important;
+  animation: bookingCardPulse 2s ease-out;
+}
+
+@keyframes bookingCardPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.6), 0 16px 40px rgba(34, 197, 94, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.25), 0 16px 40px rgba(34, 197, 94, 0.2);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0), 0 9px 29px rgba(34, 55, 40, 0.08);
+  }
+}
+
+.booking-sync-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+  padding: 8px 12px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+
 
 

@@ -200,6 +200,60 @@ service cloud.firestore {
         data.createdAt is timestamp;
     }
 
+    function isValidConsultationBooking(data) {
+      return data.keys().hasAll([
+          'id', 'name', 'email', 'whatsapp', 'age', 'gender', 'service',
+          'duration', 'dateStr', 'dateKey', 'timeStr', 'timeSlot', 'fee',
+          'paymentMethod', 'utr', 'verificationHash', 'status', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'name', 'email', 'whatsapp', 'age', 'gender', 'service',
+          'duration', 'dateStr', 'dateKey', 'timeStr', 'timeSlot', 'fee',
+          'prepNote', 'paymentMethod', 'utr', 'payerNote', 'verificationHash',
+          'status', 'createdAt', 'verifiedAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.whatsapp is string && data.whatsapp.size() >= 5 && data.whatsapp.size() <= 32 &&
+        data.age is string && data.age.size() >= 1 && data.age.size() <= 10 &&
+        data.gender is string && data.gender.size() >= 1 && data.gender.size() <= 30 &&
+        data['service'] is string && data['service'].size() >= 1 && data['service'].size() <= 100 &&
+        (data.duration == 30 || data.duration == 45 || data.duration == 50 || data.duration == 60 || data.duration == 80) &&
+        data.dateStr is string && data.dateStr.size() >= 5 && data.dateStr.size() <= 64 &&
+        data.dateKey is string && data.dateKey.size() == 10 &&
+        data.timeStr is string && data.timeStr.size() >= 3 && data.timeStr.size() <= 32 &&
+        data.timeSlot is string && data.timeSlot.size() >= 3 && data.timeSlot.size() <= 32 &&
+        data.fee is number && data.fee >= 0 &&
+        (!('prepNote' in data) || (data.prepNote is string && data.prepNote.size() <= 500)) &&
+        data.paymentMethod is string && data.paymentMethod.size() >= 2 && data.paymentMethod.size() <= 50 &&
+        data.utr is string && data.utr.size() >= 6 && data.utr.size() <= 64 &&
+        (!('payerNote' in data) || (data.payerNote is string && data.payerNote.size() <= 500)) &&
+        data.verificationHash is string && data.verificationHash.size() >= 4 && data.verificationHash.size() <= 64 &&
+        data.status is string && (
+          data.status == 'Pending verification' ||
+          data.status == 'Confirmed' ||
+          data.status == 'Not Confirmed' ||
+          data.status == 'Discrepancy' ||
+          data.status == 'Completed' ||
+          data.status == 'Cancelled'
+        ) &&
+        data.createdAt is string && data.createdAt.size() >= 3 && data.createdAt.size() <= 64 &&
+        (!('verifiedAt' in data) || (data.verifiedAt is string && data.verifiedAt.size() <= 64));
+    }
+
+    function isValidPublicBookedSlot(data) {
+      return data.keys().hasAll(['slotId', 'dateKey', 'timeSlot', 'isBooked', 'bookingId', 'createdAt']) &&
+        data.keys().hasOnly(['slotId', 'dateKey', 'timeSlot', 'isBooked', 'bookingId', 'createdAt', 'updatedAt']) &&
+        data.slotId is string && data.slotId.size() >= 1 && data.slotId.size() <= 128 && data.slotId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.dateKey is string && data.dateKey.size() == 10 &&
+        data.timeSlot is string && data.timeSlot.size() >= 3 && data.timeSlot.size() <= 32 &&
+        data.isBooked is bool &&
+        data.bookingId is string && data.bookingId.size() >= 1 && data.bookingId.size() <= 128 &&
+        data.createdAt is string && data.createdAt.size() >= 3 && data.createdAt.size() <= 64 &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
     // =========================================================================
     // Collection Rules
     // =========================================================================
@@ -473,5 +527,48 @@ service cloud.firestore {
       allow create, update: if isAdmin() && isValidId(adminId) && isValidAdminRecord(incoming());
       allow delete: if false;
     }
+
+    // 8. Client Consultation Bookings (/consultationBookings/{bookingId})
+    match /consultationBookings/{bookingId} {
+      allow get, list: if true;
+
+      // Clients can create new consultation requests with valid schema and pending verification status
+      allow create: if isValidId(bookingId) &&
+        incoming().id == bookingId &&
+        isValidConsultationBooking(incoming()) &&
+        incoming().status == 'Pending verification';
+
+      // Clinician admin can verify, update status, or record notes
+      allow update: if isValidId(bookingId) &&
+        isValidConsultationBooking(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt;
+
+      // Clinician admin can delete booking records
+      allow delete: if isValidId(bookingId);
+    }
+
+    // 9. Public Booked Session Slots (/publicBookedSlots/{slotId})
+    // Used globally to block booked session dates and times across all devices without exposing client PII
+    match /publicBookedSlots/{slotId} {
+      allow get, list: if true;
+
+      allow create: if isValidId(slotId) &&
+        incoming().slotId == slotId &&
+        isValidPublicBookedSlot(incoming());
+
+      allow update: if isValidId(slotId) &&
+        isValidPublicBookedSlot(incoming());
+
+      allow delete: if isValidId(slotId);
+    }
+
+    // 10. Practice Schedule & Session Dates/Times (/practiceSchedule/{scheduleId})
+    // Synced across all client devices and clinician space in real time
+    match /practiceSchedule/{scheduleId} {
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(scheduleId);
+    }
   }
 }
+

@@ -531,6 +531,196 @@
         }
       },
       "required": ["uid", "createdAt"]
+    },
+    "ConsultationBooking": {
+      "title": "ConsultationBooking",
+      "description": "Client consultation booking request with client contact details, selected session time, and payment transaction reference.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique booking identifier (e.g., BK-9382).",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Client full legal or preferred name.",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Client email address.",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "whatsapp": {
+          "type": "string",
+          "description": "Client WhatsApp contact phone number.",
+          "minLength": 5,
+          "maxLength": 32
+        },
+        "age": {
+          "type": "string",
+          "description": "Client age.",
+          "minLength": 1,
+          "maxLength": 10
+        },
+        "gender": {
+          "type": "string",
+          "description": "Client gender identification.",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "service": {
+          "type": "string",
+          "description": "Consultation service offering title.",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "duration": {
+          "type": "number",
+          "description": "Consultation length in minutes (30 or 60)."
+        },
+        "dateStr": {
+          "type": "string",
+          "description": "Human-readable scheduled date.",
+          "minLength": 5,
+          "maxLength": 64
+        },
+        "dateKey": {
+          "type": "string",
+          "description": "ISO date format YYYY-MM-DD.",
+          "minLength": 10,
+          "maxLength": 10
+        },
+        "timeStr": {
+          "type": "string",
+          "description": "Formatted time slot e.g. 4:00 PM IST.",
+          "minLength": 3,
+          "maxLength": 32
+        },
+        "timeSlot": {
+          "type": "string",
+          "description": "Time slot string e.g. 4:00 PM.",
+          "minLength": 3,
+          "maxLength": 32
+        },
+        "fee": {
+          "type": "number",
+          "description": "Authoritative consultation fee in INR."
+        },
+        "prepNote": {
+          "type": "string",
+          "description": "Optional client pre-session preparation notes.",
+          "maxLength": 500
+        },
+        "paymentMethod": {
+          "type": "string",
+          "description": "Payment channel used (UPI QR, UPI ID, Bank Transfer).",
+          "minLength": 2,
+          "maxLength": 50
+        },
+        "utr": {
+          "type": "string",
+          "description": "12-digit UPI UTR or bank transaction reference ID.",
+          "minLength": 6,
+          "maxLength": 64
+        },
+        "payerNote": {
+          "type": "string",
+          "description": "Optional payment remarks or sender name.",
+          "maxLength": 500
+        },
+        "verificationHash": {
+          "type": "string",
+          "description": "Internal verification audit hash.",
+          "minLength": 4,
+          "maxLength": 64
+        },
+        "status": {
+          "type": "string",
+          "description": "Verification lifecycle state.",
+          "enum": ["Pending verification", "Confirmed", "Discrepancy", "Completed", "Cancelled"]
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Date of request creation.",
+          "minLength": 3,
+          "maxLength": 64
+        },
+        "verifiedAt": {
+          "type": "string",
+          "description": "Timestamp when clinician verified transaction.",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "email",
+        "whatsapp",
+        "age",
+        "gender",
+        "service",
+        "duration",
+        "dateStr",
+        "dateKey",
+        "timeStr",
+        "timeSlot",
+        "fee",
+        "paymentMethod",
+        "utr",
+        "verificationHash",
+        "status",
+        "createdAt"
+      ]
+    },
+    "PublicBookedSlot": {
+      "title": "PublicBookedSlot",
+      "description": "Publicly readable booked session time slot for live global availability blocking without exposing client PII.",
+      "type": "object",
+      "properties": {
+        "slotId": {
+          "type": "string",
+          "description": "Unique key in format YYYY-MM-DD_TIME.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "dateKey": {
+          "type": "string",
+          "description": "Date in YYYY-MM-DD format.",
+          "minLength": 10,
+          "maxLength": 10
+        },
+        "timeSlot": {
+          "type": "string",
+          "description": "Time slot string e.g. 4:00 PM.",
+          "minLength": 3,
+          "maxLength": 32
+        },
+        "isBooked": {
+          "type": "boolean",
+          "description": "True if slot is reserved."
+        },
+        "bookingId": {
+          "type": "string",
+          "description": "Associated booking identifier.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp.",
+          "minLength": 3,
+          "maxLength": 64
+        }
+      },
+      "required": ["slotId", "dateKey", "timeSlot", "isBooked", "bookingId", "createdAt"]
     }
   },
   "firestore": {
@@ -565,6 +755,14 @@
     "/admins/{adminId}": {
       "schema": { "$ref": "#/entities/AdminRecord" },
       "description": "Administrator registry."
+    },
+    "/consultationBookings/{bookingId}": {
+      "schema": { "$ref": "#/entities/ConsultationBooking" },
+      "description": "Client consultation booking requests with client contact details and payment reference."
+    },
+    "/publicBookedSlots/{slotId}": {
+      "schema": { "$ref": "#/entities/PublicBookedSlot" },
+      "description": "Public real-time booked session slots to block double-booking globally without exposing client PII."
     }
   }
 }

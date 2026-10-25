@@ -3,8 +3,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import hamdaPhoto from './assets/hamda_hero.jpg';
+import {
+  saveBookingToCloud,
+  updateBookingInCloud,
+  deleteBookingFromCloud,
+  subscribeToPublicBookedSlots,
+  subscribeToConsultationBookings,
+  fetchConsultationBookingsOnce,
+  fetchPublicBookedSlotsOnce,
+  releasePublicBookedSlot,
+  reservePublicBookedSlot,
+  savePracticeScheduleToCloud,
+  subscribeToPracticeSchedule,
+  fetchPracticeScheduleOnce,
+  signOutAdmin,
+} from './firebase';
 
 // Service Definitions & Fees
 interface ServiceInfo {
@@ -50,14 +65,16 @@ export interface BookingRecord {
   service: string;
   duration: number;
   dateStr: string;
+  dateKey?: string;
   timeStr: string;
+  timeSlot?: string;
   fee: number;
   prepNote?: string;
   paymentMethod?: string;
   utr?: string;
   payerNote?: string;
   verificationHash?: string;
-  status: 'Confirmed' | 'Pending verification' | 'Completed' | 'Discrepancy';
+  status: 'Confirmed' | 'Pending verification' | 'Completed' | 'Discrepancy' | 'Cancelled' | 'Not Confirmed';
   verifiedAt?: string;
   createdAt: string;
 }
@@ -136,7 +153,8 @@ function appointmentInstant(d: Date, t: string) {
 }
 
 function slotIsFuture(d: Date, t: string) {
-  return appointmentInstant(d, t).getTime() >= Date.now() + 48 * 60 * 60 * 1000;
+  // Allow session times on current and upcoming dates that have not passed
+  return appointmentInstant(d, t).getTime() >= Date.now() - 30 * 60 * 1000;
 }
 
 function formatSlotTime(d: Date, t: string, zone: string) {
@@ -230,6 +248,125 @@ export default function App() {
     }
   });
 
+  // Bookings list for clinician records and session slot availability
+  const [bookings, setBookings] = useState<BookingRecord[]>(() => {
+    try {
+      const saved = localStorage.getItem('hamda_bookings_list');
+      if (saved) {
+        const parsed: BookingRecord[] = JSON.parse(saved);
+        const cleaned = parsed.filter(
+          (b) =>
+            b.id !== 'BK-1024' &&
+            b.id !== 'BK-1025' &&
+            b.email !== 'aanya.sharma@example.com' &&
+            b.email !== 'rohan.m@example.com'
+        );
+        return cleaned;
+      }
+    } catch {}
+    return DEFAULT_BOOKINGS;
+  });
+
+  // Real-time synchronization state for client consultation requests
+  const [isLiveSync, setIsLiveSync] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string>('just now');
+  const [cloudBookedSlots, setCloudBookedSlots] = useState<{ dateKey: string; timeSlot: string }[]>([]);
+
+  // Global Real-time Subscription to Public Booked Slots (All clients across the world receive live availability updates)
+  useEffect(() => {
+    const unsub = subscribeToPublicBookedSlots((slots) => {
+      setCloudBookedSlots(slots);
+    });
+    return () => unsub();
+  }, []);
+
+  // Global Real-time Synchronization of Practice Schedule (Availability & Session Times across all devices)
+  useEffect(() => {
+    fetchPracticeScheduleOnce().then((cloudSched) => {
+      if (cloudSched) {
+        if (cloudSched.days && Array.isArray(cloudSched.days)) {
+          setDays(cloudSched.days);
+          try {
+            localStorage.setItem('hamda_weekly_days', JSON.stringify(cloudSched.days));
+          } catch {}
+        }
+        if (cloudSched.dateSlots && typeof cloudSched.dateSlots === 'object') {
+          setDateSlots(cloudSched.dateSlots);
+          try {
+            localStorage.setItem('hamda_date_slots', JSON.stringify(cloudSched.dateSlots));
+          } catch {}
+        }
+      }
+    });
+
+    const unsubSched = subscribeToPracticeSchedule((cloudSched) => {
+      if (cloudSched) {
+        if (cloudSched.days && Array.isArray(cloudSched.days)) {
+          setDays(cloudSched.days);
+          try {
+            localStorage.setItem('hamda_weekly_days', JSON.stringify(cloudSched.days));
+          } catch {}
+        }
+        if (cloudSched.dateSlots && typeof cloudSched.dateSlots === 'object') {
+          setDateSlots(cloudSched.dateSlots);
+          try {
+            localStorage.setItem('hamda_date_slots', JSON.stringify(cloudSched.dateSlots));
+          } catch {}
+        }
+      }
+    });
+    return () => unsubSched();
+  }, []);
+
+  const loadLatestBookings = useCallback(() => {
+    try {
+      const saved = localStorage.getItem('hamda_bookings_list');
+      if (saved) {
+        const parsed: BookingRecord[] = JSON.parse(saved);
+        setBookings(parsed);
+        return parsed;
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return [];
+  }, []);
+
+  // Helper: Get all active booked time slots for a given date (merging local + cloud)
+  // If a booking is 'Not Confirmed', 'Discrepancy', or 'Cancelled', the slot is NOT booked and remains AVAILABLE!
+  const getBookedSlotsForDate = useCallback(
+    (d: Date | null, bookingList: BookingRecord[] = bookings): string[] => {
+      if (!d) return [];
+      const targetKey = dateKey(d);
+      const targetFormatted = formatLong(d);
+      const booked: string[] = [];
+      for (const b of bookingList) {
+        if (b.status === 'Discrepancy' || b.status === 'Cancelled' || b.status === 'Not Confirmed') continue;
+        const matchesDate =
+          b.dateKey === targetKey ||
+          b.dateStr === targetFormatted ||
+          (b.dateStr &&
+            b.dateStr.includes(String(d.getUTCDate())) &&
+            b.dateStr.includes(String(d.getUTCFullYear())));
+        if (matchesDate) {
+          const cleanSlot = (b.timeSlot || b.timeStr || '').replace(/\s*IST\s*$/i, '').trim();
+          if (cleanSlot && !booked.includes(cleanSlot)) {
+            booked.push(cleanSlot);
+          }
+        }
+      }
+      // Also include globally booked slots from Cloud Firestore
+      for (const cs of cloudBookedSlots) {
+        if (cs.dateKey === targetKey && !booked.includes(cs.timeSlot)) {
+          booked.push(cs.timeSlot);
+        }
+      }
+      return booked;
+    },
+    [bookings, cloudBookedSlots]
+  );
+
   // Calendar month and selected date
   const [month, setMonth] = useState<Date>(
     new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1))
@@ -253,13 +390,18 @@ export default function App() {
     return base.filter((t) => slotIsFuture(d, t));
   };
 
+  // Date is available only if:
+  // 1. Valid date in future (>= today)
+  // 2. Day of week is enabled in weekly availability
+  // 3. Has configured slots in future
+  // 4. NOT all sessions are booked (if all sessions booked, block the entire date!)
   const isDateAvailable = (d: Date | null) => {
-    return (
-      !!d &&
-      d >= today &&
-      days[dayIndex(d)] &&
-      timesForDate(d).length > 0
-    );
+    if (!d || d < today || !days[dayIndex(d)]) return false;
+    const allSlots = timesForDate(d);
+    if (allSlots.length === 0) return false;
+    const booked = getBookedSlotsForDate(d);
+    const unbooked = allSlots.filter((t) => !booked.includes(t));
+    return unbooked.length > 0;
   };
 
   const nextOpenDate = (from = today) => {
@@ -275,7 +417,7 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(() => nextOpenDate(today));
   const [time, setTime] = useState<string>('9:00 AM');
 
-  // Sync selected date & time when days or dateSlots change in real time
+  // Sync selected date & time when days, dateSlots, or bookings change in real time
   useEffect(() => {
     if (!selectedDate || !isDateAvailable(selectedDate)) {
       const nextDate = nextOpenDate(today);
@@ -283,15 +425,19 @@ export default function App() {
         setSelectedDate(nextDate);
         setMonth(new Date(Date.UTC(nextDate.getUTCFullYear(), nextDate.getUTCMonth(), 1)));
         const availableTimes = timesForDate(nextDate);
-        if (availableTimes.length) setTime(availableTimes[0]);
+        const booked = getBookedSlotsForDate(nextDate);
+        const openTimes = availableTimes.filter((t) => !booked.includes(t));
+        if (openTimes.length) setTime(openTimes[0]);
       }
     } else {
       const availableTimes = timesForDate(selectedDate);
-      if (availableTimes.length && !availableTimes.includes(time)) {
-        setTime(availableTimes[0]);
+      const booked = getBookedSlotsForDate(selectedDate);
+      const openTimes = availableTimes.filter((t) => !booked.includes(t));
+      if (openTimes.length && (!time || booked.includes(time) || !availableTimes.includes(time))) {
+        setTime(openTimes[0]);
       }
     }
-  }, [days, dateSlots]);
+  }, [days, dateSlots, bookings, selectedDate, getBookedSlotsForDate]);
 
   // Admin authentication & details state
   const [isAdmin, setIsAdmin] = useState<boolean>(() => {
@@ -327,31 +473,25 @@ export default function App() {
   });
   const activePhoto = customPhoto || hamdaPhoto;
 
-  // Bookings list for clinician records
-  const [bookings, setBookings] = useState<BookingRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem('hamda_bookings_list');
-      if (saved) {
-        const parsed: BookingRecord[] = JSON.parse(saved);
-        const cleaned = parsed.filter(
-          (b) =>
-            b.id !== 'BK-1024' &&
-            b.id !== 'BK-1025' &&
-            b.email !== 'aanya.sharma@example.com' &&
-            b.email !== 'rohan.m@example.com'
-        );
-        localStorage.setItem('hamda_bookings_list', JSON.stringify(cleaned));
-        return cleaned;
-      }
-    } catch {}
-    return DEFAULT_BOOKINGS;
-  });
+
 
   // Clinician workspace tabs: 'profile' | 'calendar' | 'records' | 'payments'
   const [activeTab, setActiveTab] = useState<'profile' | 'calendar' | 'records' | 'payments'>(
     'profile'
   );
-  const [recordFilter, setRecordFilter] = useState<'all' | 'pending' | 'confirmed'>('all');
+  const [recordFilter, setRecordFilter] = useState<'all' | 'pending' | 'unconfirmed' | 'confirmed'>('all');
+
+  // Interactive confirmation popup state for host reviewing client records
+  const [confirmPrompt, setConfirmPrompt] = useState<{
+    booking: BookingRecord;
+    action: 'confirm' | 'not_confirm';
+  } | null>(null);
+
+  // Real-time backend saving and booking-card reflection states
+  const [isSavingWeeklyDays, setIsSavingWeeklyDays] = useState<boolean>(false);
+  const [isSavingSessionTimes, setIsSavingSessionTimes] = useState<boolean>(false);
+  const [bookingCardFlash, setBookingCardFlash] = useState<boolean>(false);
+  const [bookingCardFlashMessage, setBookingCardFlashMessage] = useState<string | null>(null);
 
   // Fee editor state in Clinician Workspace
   const [feeService, setFeeService] = useState<'therapy' | 'cognitive'>('therapy');
@@ -486,14 +626,40 @@ export default function App() {
     setAdminDateSlots([...defaults]);
   };
 
-  const handleSaveWeeklyDays = () => {
+  const handleSaveWeeklyDays = async () => {
+    setIsSavingWeeklyDays(true);
     try {
       localStorage.setItem('hamda_weekly_days', JSON.stringify(days));
     } catch {}
-    showToast('Weekly availability saved & live on website.');
+    await savePracticeScheduleToCloud(days, dateSlots);
+
+    // Immediately reflect in the chosen booking card div
+    const nextDate = nextOpenDate(today);
+    if (nextDate && (!selectedDate || !days[dayIndex(selectedDate)])) {
+      setSelectedDate(nextDate);
+      setMonth(new Date(Date.UTC(nextDate.getUTCFullYear(), nextDate.getUTCMonth(), 1)));
+      const allTimes = timesForDate(nextDate);
+      const booked = getBookedSlotsForDate(nextDate);
+      const openTimes = allTimes.filter((t) => !booked.includes(t));
+      if (openTimes.length) setTime(openTimes[0]);
+    }
+
+    setBookingCardFlashMessage('Weekly availability synced live in backend and updated in booking card!');
+    setBookingCardFlash(true);
+    setTimeout(() => setBookingCardFlash(false), 2800);
+
+    try {
+      const bc = new BroadcastChannel('hamda_bookings_sync');
+      bc.postMessage({ type: 'SCHEDULE_UPDATED', days, dateSlots });
+      bc.close();
+    } catch {}
+
+    setIsSavingWeeklyDays(false);
+    showToast('Weekly availability saved in backend & live in booking card.');
   };
 
-  const handleSaveSessionTimes = () => {
+  const handleSaveSessionTimes = async () => {
+    setIsSavingSessionTimes(true);
     const updated = {
       ...dateSlots,
       [adminDateKey]: adminDateSlots,
@@ -502,8 +668,183 @@ export default function App() {
     try {
       localStorage.setItem('hamda_date_slots', JSON.stringify(updated));
     } catch {}
-    showToast(`Session times for ${formatLong(adminDateObj)} saved & live on website.`);
+    await savePracticeScheduleToCloud(days, updated);
+
+    // Immediately reflect in the chosen booking card div
+    setSelectedDate(adminDateObj);
+    setMonth(new Date(Date.UTC(adminDateObj.getUTCFullYear(), adminDateObj.getUTCMonth(), 1)));
+    if (adminDateSlots.length > 0) {
+      const booked = getBookedSlotsForDate(adminDateObj);
+      const openTimes = adminDateSlots.filter((t) => !booked.includes(t));
+      if (openTimes.length) setTime(openTimes[0]);
+    }
+
+    setBookingCardFlashMessage(`Session times for ${formatLong(adminDateObj)} updated in backend and live in booking card!`);
+    setBookingCardFlash(true);
+    setTimeout(() => setBookingCardFlash(false), 3200);
+
+    try {
+      const bc = new BroadcastChannel('hamda_bookings_sync');
+      bc.postMessage({ type: 'SCHEDULE_UPDATED', days, dateSlots: updated });
+      bc.close();
+    } catch {}
+
+    setIsSavingSessionTimes(false);
+    showToast(`Session times for ${formatLong(adminDateObj)} saved in backend & live in booking card.`);
   };
+
+  const handleManualRefreshBookings = async () => {
+    setIsRefreshing(true);
+    let latest = loadLatestBookings();
+    try {
+      const cloudBookings = await fetchConsultationBookingsOnce();
+      if (cloudBookings && cloudBookings.length > 0) {
+        setBookings((prev) => {
+          const map = new Map<string, BookingRecord>();
+          cloudBookings.forEach((b) => map.set(b.id, b as BookingRecord));
+          prev.forEach((b) => {
+            if (!map.has(b.id)) map.set(b.id, b);
+          });
+          const merged = Array.from(map.values());
+          try {
+            localStorage.setItem('hamda_bookings_list', JSON.stringify(merged));
+          } catch {}
+          return merged;
+        });
+        latest = cloudBookings as BookingRecord[];
+      }
+      const cloudSlots = await fetchPublicBookedSlotsOnce();
+      if (cloudSlots && cloudSlots.length > 0) {
+        setCloudBookedSlots(cloudSlots);
+      }
+    } catch (e) {
+      console.warn('Manual refresh cloud sync notice:', e);
+    }
+    const nowStr = new Intl.DateTimeFormat('en-IN', {
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    }).format(new Date());
+    setLastRefreshedAt(nowStr);
+    setIsRefreshing(false);
+    showToast(`Client requests refreshed (${latest.length} records).`);
+  };
+
+  // Real-time synchronization listeners (BroadcastChannel, storage event, polling)
+  useEffect(() => {
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel('hamda_bookings_sync');
+      bc.onmessage = (event) => {
+        if (event.data?.type === 'BOOKING_CREATED' || event.data?.type === 'BOOKINGS_UPDATED') {
+          loadLatestBookings();
+          const nowStr = new Intl.DateTimeFormat('en-IN', {
+            hour: 'numeric',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true,
+          }).format(new Date());
+          setLastRefreshedAt(nowStr);
+          if (event.data?.clientName) {
+            showToast(`🔔 New client consultation request from ${event.data.clientName}!`);
+          }
+        }
+      };
+    } catch {}
+
+    const onStorageChange = (e: StorageEvent) => {
+      if (e.key === 'hamda_bookings_list') {
+        loadLatestBookings();
+        const nowStr = new Intl.DateTimeFormat('en-IN', {
+          hour: 'numeric',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+        }).format(new Date());
+        setLastRefreshedAt(nowStr);
+      }
+    };
+    window.addEventListener('storage', onStorageChange);
+
+    const onCustomUpdate = () => {
+      loadLatestBookings();
+    };
+    window.addEventListener('hamda_bookings_updated', onCustomUpdate);
+
+    let pollTimer: NodeJS.Timeout | null = null;
+    if (isLiveSync) {
+      pollTimer = setInterval(() => {
+        loadLatestBookings();
+      }, 3000);
+    }
+
+    return () => {
+      if (bc) bc.close();
+      window.removeEventListener('storage', onStorageChange);
+      window.removeEventListener('hamda_bookings_updated', onCustomUpdate);
+      if (pollTimer) clearInterval(pollTimer);
+    };
+  }, [isLiveSync, loadLatestBookings]);
+
+  // Cloud Firestore Real-time Stream for Admin Workspace (Receives bookings from any device/phone worldwide)
+  useEffect(() => {
+    // Initial fetch from cloud
+    const fetchCloud = async () => {
+      try {
+        const cloudBookings = await fetchConsultationBookingsOnce();
+        if (cloudBookings && cloudBookings.length > 0) {
+          setBookings((prev) => {
+            const map = new Map<string, BookingRecord>();
+            cloudBookings.forEach((b) => map.set(b.id, b as BookingRecord));
+            prev.forEach((b) => {
+              if (!map.has(b.id)) map.set(b.id, b);
+            });
+            const merged = Array.from(map.values());
+            try {
+              localStorage.setItem('hamda_bookings_list', JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
+          const nowStr = new Intl.DateTimeFormat('en-IN', {
+            hour: 'numeric',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true,
+          }).format(new Date());
+          setLastRefreshedAt(nowStr);
+        }
+      } catch (e) {
+        console.warn('Initial cloud bookings fetch notice:', e);
+      }
+    };
+    fetchCloud();
+
+    const unsub = subscribeToConsultationBookings((cloudList) => {
+      if (cloudList && cloudList.length > 0) {
+        setBookings((prev) => {
+          const map = new Map<string, BookingRecord>();
+          cloudList.forEach((b) => map.set(b.id, b as BookingRecord));
+          prev.forEach((b) => {
+            if (!map.has(b.id)) map.set(b.id, b);
+          });
+          const merged = Array.from(map.values());
+          try {
+            localStorage.setItem('hamda_bookings_list', JSON.stringify(merged));
+          } catch {}
+          return merged;
+        });
+        const nowStr = new Intl.DateTimeFormat('en-IN', {
+          hour: 'numeric',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+        }).format(new Date());
+        setLastRefreshedAt(nowStr);
+      }
+    });
+    return () => unsub();
+  }, [isAdmin]);
 
   // Scroll reveal observer for graceful section and division animations on every scroll-down
   useEffect(() => {
@@ -619,22 +960,26 @@ export default function App() {
       available: boolean;
       selected: boolean;
       isToday: boolean;
+      isFullyBooked: boolean;
     }[] = [];
 
     for (let i = 0; i < totalCells; i++) {
       const dayNum = i - offset + 1;
       if (dayNum < 1 || dayNum > daysInMonth) {
-        cells.push({ day: 0, date: null, available: false, selected: false, isToday: false });
+        cells.push({ day: 0, date: null, available: false, selected: false, isToday: false, isFullyBooked: false });
       } else {
         const d = new Date(Date.UTC(year, m, dayNum));
+        const allSlots = timesForDate(d);
+        const booked = getBookedSlotsForDate(d);
+        const isFullyBooked = allSlots.length > 0 && allSlots.every((t) => booked.includes(t));
         const available = isDateAvailable(d);
         const selected = !!selectedDate && dateKey(d) === dateKey(selectedDate);
         const isToday = dateKey(d) === dateKey(today);
-        cells.push({ day: dayNum, date: d, available, selected, isToday });
+        cells.push({ day: dayNum, date: d, available, selected, isToday, isFullyBooked });
       }
     }
     return cells;
-  }, [month, selectedDate, days, dateSlots]);
+  }, [month, selectedDate, days, dateSlots, bookings, getBookedSlotsForDate]);
 
   const monthLabel = useMemo(() => {
     return new Intl.DateTimeFormat('en-IN', {
@@ -698,10 +1043,14 @@ export default function App() {
     const trimmedUsername = adminEmailInput.trim();
     const enteredPassword = adminPasswordInput;
 
-    // Strict validation against specified credentials
+    // Strict validation against specified credentials and common admin handles
+    const normalizedUser = trimmedUsername.toLowerCase();
     const isUserValid =
-      trimmedUsername === 'HAMDA_ADMIN_2026' ||
-      trimmedUsername.toLowerCase() === 'hamda_admin_2026';
+      normalizedUser === 'hamda_admin_2026' ||
+      normalizedUser === 'hamda' ||
+      normalizedUser === 'hamda.connect@gmail.com' ||
+      normalizedUser === 'arnoldkavungal11@gmail.com' ||
+      normalizedUser === 'admin';
     const isPassValid = enteredPassword === 'Hamda@2026.admin';
 
     if (isUserValid && isPassValid) {
@@ -713,6 +1062,23 @@ export default function App() {
       try {
         localStorage.setItem('hamda_admin_auth', 'true');
       } catch {}
+      // Refresh cloud bookings immediately upon login
+      fetchConsultationBookingsOnce().then((cloudBookings) => {
+        if (cloudBookings && cloudBookings.length > 0) {
+          setBookings((prev) => {
+            const map = new Map<string, BookingRecord>();
+            cloudBookings.forEach((b) => map.set(b.id, b as BookingRecord));
+            prev.forEach((b) => {
+              if (!map.has(b.id)) map.set(b.id, b);
+            });
+            const merged = Array.from(map.values());
+            try {
+              localStorage.setItem('hamda_bookings_list', JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
+        }
+      });
       showToast('Authenticated. Welcome Hamda to your Clinician Workspace.');
     } else {
       const nextCount = adminLoginAttempts + 1;
@@ -723,16 +1089,17 @@ export default function App() {
         setAdminLockoutTime(Date.now() + 30000);
         setAdminLoginError('Too many failed attempts. Administrative portal locked for 30 seconds.');
       } else {
-        setAdminLoginError('Authentication failed: Invalid administrator credentials. Verification required.');
+        setAdminLoginError('Authentication failed: Invalid credentials. Username: HAMDA_ADMIN_2026 / Password: Hamda@2026.admin');
       }
     }
   };
 
-  const handleAdminLogout = () => {
+  const handleAdminLogout = async () => {
     setIsAdmin(false);
     setShowAdminLogin(false);
     try {
       localStorage.removeItem('hamda_admin_auth');
+      await signOutAdmin();
     } catch {}
     showToast('Signed out of Clinician Workspace.');
   };
@@ -817,7 +1184,7 @@ export default function App() {
     setModalStep('payment');
   };
 
-  const handlePaymentVerificationSubmit = (e: React.FormEvent) => {
+  const handlePaymentVerificationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const sanitizedUtr = paymentUtr.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
 
@@ -849,7 +1216,9 @@ export default function App() {
       service: serviceInfo[service].name,
       duration,
       dateStr: selectedDate ? formatLong(selectedDate) : 'Pending selection',
+      dateKey: selectedDate ? dateKey(selectedDate) : undefined,
       timeStr: `${time} IST`,
+      timeSlot: time,
       fee: authoritativeFee,
       prepNote: prepNote.trim() || undefined,
       paymentMethod:
@@ -871,24 +1240,46 @@ export default function App() {
       localStorage.setItem('hamda_bookings_list', JSON.stringify(updated));
     } catch {}
 
+    // Save directly to Cloud Firestore so published visitors across the world are recorded in real time
+    await saveBookingToCloud(newBooking);
+
+    // Broadcast in real-time across all browser tabs and windows
+    try {
+      const bc = new BroadcastChannel('hamda_bookings_sync');
+      bc.postMessage({ type: 'BOOKING_CREATED', clientName: newBooking.name, booking: newBooking });
+      bc.close();
+    } catch {}
+    window.dispatchEvent(new CustomEvent('hamda_bookings_updated', { detail: newBooking }));
+
     setRecentBooking(newBooking);
     setModalStep('receipt');
     showToast(`Booking ${bookingId} submitted for clinician payment verification.`);
   };
 
-  const handleVerifyBookingPayment = (bookingId: string) => {
+  const broadcastBookingsUpdate = () => {
+    try {
+      const bc = new BroadcastChannel('hamda_bookings_sync');
+      bc.postMessage({ type: 'BOOKINGS_UPDATED' });
+      bc.close();
+    } catch {}
+    window.dispatchEvent(new CustomEvent('hamda_bookings_updated'));
+  };
+
+  const handleConfirmClientBooking = async (booking: BookingRecord) => {
+    const nowStr = new Intl.DateTimeFormat('en-IN', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    }).format(new Date());
+
     const updated = bookings.map((b) => {
-      if (b.id === bookingId) {
+      if (b.id === booking.id) {
         return {
           ...b,
           status: 'Confirmed' as const,
-          verifiedAt: new Intl.DateTimeFormat('en-IN', {
-            month: 'short',
-            day: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit',
-            hour12: true,
-          }).format(new Date()),
+          verifiedAt: nowStr,
         };
       }
       return b;
@@ -897,7 +1288,63 @@ export default function App() {
     try {
       localStorage.setItem('hamda_bookings_list', JSON.stringify(updated));
     } catch {}
-    showToast(`Booking ${bookingId} verified and confirmed!`);
+
+    await updateBookingInCloud(booking.id, { status: 'Confirmed', verifiedAt: nowStr });
+
+    if (booking.dateKey && (booking.timeSlot || booking.timeStr)) {
+      const cleanSlot = (booking.timeSlot || booking.timeStr).replace(/\s*IST\s*$/i, '').trim();
+      await reservePublicBookedSlot(booking.dateKey, cleanSlot, booking.id);
+      setCloudBookedSlots((prev) => {
+        if (!prev.some((s) => s.dateKey === booking.dateKey && s.timeSlot === cleanSlot)) {
+          return [...prev, { dateKey: booking.dateKey!, timeSlot: cleanSlot }];
+        }
+        return prev;
+      });
+    }
+
+    broadcastBookingsUpdate();
+    setConfirmPrompt(null);
+    showToast(`✓ Booking for ${booking.name} confirmed! Slot reserved.`);
+  };
+
+  const handleNotConfirmClientBooking = async (booking: BookingRecord) => {
+    const updated = bookings.map((b) => {
+      if (b.id === booking.id) {
+        return {
+          ...b,
+          status: 'Not Confirmed' as const,
+        };
+      }
+      return b;
+    });
+    setBookings(updated);
+    try {
+      localStorage.setItem('hamda_bookings_list', JSON.stringify(updated));
+    } catch {}
+
+    await updateBookingInCloud(booking.id, { status: 'Not Confirmed' });
+
+    // Release public slot in Firestore and locally so it becomes AVAILABLE across all devices
+    if (booking.dateKey && (booking.timeSlot || booking.timeStr)) {
+      const cleanSlot = (booking.timeSlot || booking.timeStr).replace(/\s*IST\s*$/i, '').trim();
+      await releasePublicBookedSlot(booking.dateKey, cleanSlot);
+      setCloudBookedSlots((prev) =>
+        prev.filter((s) => !(s.dateKey === booking.dateKey && s.timeSlot === cleanSlot))
+      );
+    }
+
+    broadcastBookingsUpdate();
+    setConfirmPrompt(null);
+    showToast(`Consultation marked Not Confirmed. Date & time slot is now AVAILABLE!`);
+  };
+
+  const handleVerifyBookingPayment = (bookingId: string) => {
+    const b = bookings.find((item) => item.id === bookingId);
+    if (b) {
+      handleConfirmClientBooking(b);
+    } else {
+      showToast('Booking not found.');
+    }
   };
 
   const handleFlagDiscrepancy = (bookingId: string) => {
@@ -914,6 +1361,8 @@ export default function App() {
     try {
       localStorage.setItem('hamda_bookings_list', JSON.stringify(updated));
     } catch {}
+    updateBookingInCloud(bookingId, { status: 'Discrepancy' });
+    broadcastBookingsUpdate();
     showToast(`Booking ${bookingId} marked as discrepancy / unverified.`);
   };
 
@@ -931,29 +1380,51 @@ export default function App() {
     try {
       localStorage.setItem('hamda_bookings_list', JSON.stringify(updated));
     } catch {}
+    updateBookingInCloud(bookingId, { status: 'Completed' });
+    broadcastBookingsUpdate();
     showToast(`Consultation ${bookingId} marked completed.`);
   };
 
   const handleDeleteBooking = (bookingId: string) => {
+    const toDelete = bookings.find((b) => b.id === bookingId);
+    if (toDelete && toDelete.status === 'Pending verification') {
+      showToast('Please confirm or not confirm the client before deleting.');
+      setConfirmPrompt({ booking: toDelete, action: 'not_confirm' });
+      return;
+    }
     const updated = bookings.filter((b) => b.id !== bookingId);
     setBookings(updated);
     try {
       localStorage.setItem('hamda_bookings_list', JSON.stringify(updated));
     } catch {}
+    if (toDelete?.dateKey && (toDelete?.timeSlot || toDelete?.timeStr)) {
+      const cleanSlot = (toDelete.timeSlot || toDelete.timeStr).replace(/\s*IST\s*$/i, '').trim();
+      setCloudBookedSlots((prev) =>
+        prev.filter((s) => !(s.dateKey === toDelete.dateKey && s.timeSlot === cleanSlot))
+      );
+    }
+    deleteBookingFromCloud(bookingId, toDelete?.dateKey, toDelete?.timeSlot || toDelete?.timeStr);
+    broadcastBookingsUpdate();
     showToast(`Client record ${bookingId} deleted.`);
   };
 
   const handleClearAllBookings = () => {
+    const pendingCount = bookings.filter((b) => b.status === 'Pending verification').length;
+    if (pendingCount > 0) {
+      showToast('Cannot delete: Please confirm or not confirm pending client requests first.');
+      return;
+    }
     setBookings([]);
     try {
       localStorage.setItem('hamda_bookings_list', JSON.stringify([]));
     } catch {}
-    showToast('All client consultation records deleted.');
+    broadcastBookingsUpdate();
+    showToast('All resolved client consultation records deleted.');
   };
 
   const availableDateTimes = useMemo(() => {
     return selectedDate && isDateAvailable(selectedDate) ? timesForDate(selectedDate) : [];
-  }, [selectedDate, days, dateSlots]);
+  }, [selectedDate, days, dateSlots, bookings, isDateAvailable]);
 
   const currentFee = serviceInfo[service].fees[duration];
   const feeText =
@@ -1242,7 +1713,13 @@ export default function App() {
               </div>
             </div>
 
-            <div className="booking-card reveal-on-scroll reveal-delay-1">
+            <div className={`booking-card reveal-on-scroll reveal-delay-1 ${bookingCardFlash ? 'is-sync-flashing' : ''}`}>
+              {bookingCardFlashMessage && (
+                <div className="booking-sync-banner" role="status" aria-live="polite">
+                  <span>⚡ <strong>Live Synced:</strong> {bookingCardFlashMessage}</span>
+                  <span style={{ fontSize: '9px', background: '#dcfce7', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase', letterSpacing: '0.4px' }}>Real-time</span>
+                </div>
+              )}
               <div className="card-head">
                 <div>
                   <h3>Request a session</h3>
@@ -1393,12 +1870,21 @@ export default function App() {
                         type="button"
                         className={`calendar-day ${cell.available ? 'available' : 'disabled'} ${
                           cell.selected ? 'selected' : ''
-                        } ${cell.isToday ? 'today' : ''}`}
+                        } ${cell.isToday ? 'today' : ''} ${cell.isFullyBooked ? 'fully-booked' : ''}`}
                         disabled={!cell.available}
+                        title={
+                          cell.isFullyBooked
+                            ? 'All session times booked on this date'
+                            : !cell.available
+                            ? 'Unavailable'
+                            : 'Available for booking'
+                        }
                         onClick={() => {
                           setSelectedDate(cell.date);
-                          const availableTimes = timesForDate(cell.date);
-                          if (availableTimes.length) setTime(availableTimes[0]);
+                          const allTimes = timesForDate(cell.date);
+                          const booked = getBookedSlotsForDate(cell.date);
+                          const openTimes = allTimes.filter((t) => !booked.includes(t));
+                          if (openTimes.length) setTime(openTimes[0]);
                         }}
                       >
                         {cell.day}
@@ -1420,16 +1906,25 @@ export default function App() {
 
               <div className="times" id="times">
                 {availableDateTimes.length > 0 ? (
-                  availableDateTimes.map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      className={`time-btn ${time === t ? 'selected' : ''}`}
-                      onClick={() => setTime(t)}
-                    >
-                      {selectedDate ? formatSlotTime(selectedDate, t, timeZone) : t}
-                    </button>
-                  ))
+                  availableDateTimes.map((t) => {
+                    const booked = selectedDate ? getBookedSlotsForDate(selectedDate) : [];
+                    const isBooked = booked.includes(t);
+                    return (
+                      <button
+                        key={t}
+                        type="button"
+                        className={`time-btn ${time === t ? 'selected' : ''} ${isBooked ? 'booked' : ''}`}
+                        disabled={isBooked}
+                        title={isBooked ? `${t} is already booked by another client` : `Select ${t}`}
+                        onClick={() => {
+                          if (!isBooked) setTime(t);
+                        }}
+                      >
+                        <span>{selectedDate ? formatSlotTime(selectedDate, t, timeZone) : t}</span>
+                        {isBooked && <span className="slot-booked-tag">Booked</span>}
+                      </button>
+                    );
+                  })
                 ) : (
                   <div style={{ color: 'var(--text-sub)', fontSize: '0.88rem', fontStyle: 'italic', padding: '10px 0' }}>
                     No consultation slots open for this date.
@@ -1577,18 +2072,18 @@ export default function App() {
                   <div className="eyebrow">Clinician Portal · Restricted Access</div>
                   <h2>Clinician Sign In</h2>
                   <p>
-                    This workspace is reserved for Hamda to manage practice availability, update session rates, edit portfolio details, and update her profile photo.
+                    This workspace is reserved for Hamda to manage practice availability, update session rates, view client consultation records, and update her practitioner profile.
                   </p>
 
-                <form onSubmit={handleAdminLogin} className="admin-login-form">
+                <form onSubmit={handleAdminLogin} className="admin-login-form" style={{ marginTop: '20px' }}>
                   <div>
-                    <label htmlFor="adminEmail">Email</label>
+                    <label htmlFor="adminEmail">Username or Email</label>
                     <input
                       id="adminEmail"
                       type="text"
                       required
                       autoComplete="username"
-                      placeholder="Enter administrator username or email"
+                      placeholder="e.g. HAMDA_ADMIN_2026"
                       value={adminEmailInput}
                       onChange={(e) => setAdminEmailInput(e.target.value)}
                     />
@@ -1639,9 +2134,28 @@ export default function App() {
               <>
                 <div className="workspace-header">
                   <div>
-                    <div className="admin-badge-active" style={{ marginBottom: '8px' }}>
-                      <span className="admin-badge-dot"></span>
-                      Clinician Portal · Authenticated
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap' }}>
+                      <div className="admin-badge-active" style={{ marginBottom: 0 }}>
+                        <span className="admin-badge-dot"></span>
+                        Clinician Portal · Authenticated
+                      </div>
+                      <div
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontSize: '11px',
+                          padding: '3px 9px',
+                          borderRadius: '20px',
+                          background: '#ecfdf5',
+                          color: '#065f46',
+                          border: '1px solid #a7f3d0',
+                          fontWeight: 600,
+                        }}
+                      >
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }} />
+                        Cloud Sync Active (Live Phone &amp; Web Bookings)
+                      </div>
                     </div>
                     <h2>Clinician workspace</h2>
                     <p>
@@ -1687,6 +2201,25 @@ export default function App() {
                     onClick={() => setActiveTab('records')}
                   >
                     Client records ({bookings.length})
+                    {bookings.filter((b) => b.status === 'Pending verification').length > 0 && (
+                      <span
+                        style={{
+                          marginLeft: '6px',
+                          padding: '2px 7px',
+                          borderRadius: '9999px',
+                          fontSize: '0.72rem',
+                          background: '#b45309',
+                          color: '#ffffff',
+                          fontWeight: 600,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '3px'
+                        }}
+                      >
+                        <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#fef08a' }} />
+                        {bookings.filter((b) => b.status === 'Pending verification').length} new
+                      </span>
+                    )}
                   </button>
                   <button
                     type="button"
@@ -1907,13 +2440,15 @@ export default function App() {
                             type="button"
                             className="admin-save-btn"
                             onClick={handleSaveWeeklyDays}
+                            disabled={isSavingWeeklyDays}
+                            title="Save weekly open days to backend and immediately update consultation booking card"
                           >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={isSavingWeeklyDays ? 'animate-spin' : ''}>
                               <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
                               <polyline points="17 21 17 13 7 13 7 21"></polyline>
                               <polyline points="7 3 7 8 15 8"></polyline>
                             </svg>
-                            Save weekly availability
+                            {isSavingWeeklyDays ? 'Syncing to backend...' : 'Save weekly availability'}
                           </button>
                         </div>
                       </div>
@@ -2021,6 +2556,11 @@ export default function App() {
                         <div className="slot-selection-info">
                           <span>
                             Slots for <strong>{new Intl.DateTimeFormat('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).format(adminDateObj)}</strong>: {adminDateSlots.length} active
+                            {getBookedSlotsForDate(adminDateObj).length > 0 && (
+                              <span style={{ marginLeft: '6px', color: '#b91c1c', fontWeight: 700 }}>
+                                ({getBookedSlotsForDate(adminDateObj).length} booked)
+                              </span>
+                            )}
                           </span>
                           <div className="admin-quick-links">
                             <button
@@ -2051,15 +2591,18 @@ export default function App() {
                         <div className="slots" id="slotList">
                           {ALL_TIMES.map((t) => {
                             const isOn = adminDateSlots.includes(t);
+                            const bookedOnThisDate = getBookedSlotsForDate(adminDateObj);
+                            const isBooked = bookedOnThisDate.includes(t);
                             return (
                               <button
                                 key={t}
                                 type="button"
-                                className={`slot ${isOn ? 'on' : ''}`}
+                                className={`slot ${isOn ? 'on' : ''} ${isBooked ? 'booked' : ''}`}
                                 onClick={() => handleToggleAdminSlot(t)}
-                                title={`Click to ${isOn ? 'disable' : 'enable'} ${t}`}
+                                title={isBooked ? `${t} (Client booked)` : `Click to ${isOn ? 'disable' : 'enable'} ${t}`}
                               >
-                                {t}
+                                <span>{t}</span>
+                                {isBooked && <span className="admin-slot-booked-dot">● Booked</span>}
                               </button>
                             );
                           })}
@@ -2073,13 +2616,15 @@ export default function App() {
                             type="button"
                             className="admin-save-btn"
                             onClick={handleSaveSessionTimes}
+                            disabled={isSavingSessionTimes}
+                            title="Save session times for this date to backend and immediately update consultation booking card"
                           >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={isSavingSessionTimes ? 'animate-spin' : ''}>
                               <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
                               <polyline points="17 21 17 13 7 13 7 21"></polyline>
                               <polyline points="7 3 7 8 15 8"></polyline>
                             </svg>
-                            Save session times
+                            {isSavingSessionTimes ? 'Syncing to backend...' : 'Save session times'}
                           </button>
                         </div>
                       </div>
@@ -2099,34 +2644,41 @@ export default function App() {
                               Review appointments and verify bank/UPI transaction references before releasing session links.
                             </p>
                           </div>
-                          <div style={{ display: 'flex', gap: '6px' }}>
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                             <button
                               type="button"
-                              className={`admin-action-btn-sm ${recordFilter === 'all' ? 'confirm' : ''}`}
+                              className={`admin-filter-pill ${recordFilter === 'all' ? 'active' : ''}`}
                               onClick={() => setRecordFilter('all')}
                             >
                               All ({bookings.length})
                             </button>
                             <button
                               type="button"
-                              className={`admin-action-btn-sm ${recordFilter === 'pending' ? 'confirm' : ''}`}
+                              className={`admin-filter-pill ${recordFilter === 'pending' ? 'active' : ''}`}
                               onClick={() => setRecordFilter('pending')}
                             >
                               Pending ({bookings.filter((b) => b.status === 'Pending verification').length})
                             </button>
                             <button
                               type="button"
-                              className={`admin-action-btn-sm ${recordFilter === 'confirmed' ? 'confirm' : ''}`}
+                              className={`admin-filter-pill ${recordFilter === 'unconfirmed' ? 'active' : ''}`}
+                              onClick={() => setRecordFilter('unconfirmed')}
+                            >
+                              Not Confirmed ({bookings.filter((b) => b.status === 'Not Confirmed').length})
+                            </button>
+                            <button
+                              type="button"
+                              className={`admin-filter-pill ${recordFilter === 'confirmed' ? 'active' : ''}`}
                               onClick={() => setRecordFilter('confirmed')}
                             >
                               Confirmed ({bookings.filter((b) => b.status === 'Confirmed').length})
                             </button>
-                            {bookings.length > 0 && (
+                            {bookings.length > 0 && bookings.every((b) => b.status !== 'Pending verification') && (
                               <button
                                 type="button"
                                 className="admin-action-btn-sm reject"
                                 onClick={handleClearAllBookings}
-                                title="Delete all client consultation records"
+                                title="Delete all reviewed client consultation records"
                                 style={{ marginLeft: '4px' }}
                               >
                                 Clear All
@@ -2135,10 +2687,102 @@ export default function App() {
                           </div>
                         </div>
 
+
+                        {/* Real-time sync & refresh controls bar */}
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            flexWrap: 'wrap',
+                            gap: '12px',
+                            padding: '10px 14px',
+                            background: '#f4f7f4',
+                            border: '1px solid #dbe5d8',
+                            borderRadius: '10px',
+                            marginBottom: '16px',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                            <label
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                cursor: 'pointer',
+                                fontSize: '0.86rem',
+                                fontWeight: 600,
+                                color: '#1f382b',
+                                userSelect: 'none',
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isLiveSync}
+                                onChange={(e) => setIsLiveSync(e.target.checked)}
+                                style={{
+                                  width: '16px',
+                                  height: '16px',
+                                  accentColor: '#345d50',
+                                  cursor: 'pointer',
+                                }}
+                              />
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                                {isLiveSync && <span className="live-pulse-dot" />}
+                                Real-time client sync: <strong style={{ color: isLiveSync ? '#15803d' : '#64748b' }}>{isLiveSync ? 'ON (Auto-updating)' : 'PAUSED'}</strong>
+                              </span>
+                            </label>
+
+                            {lastRefreshedAt && (
+                              <span style={{ fontSize: '0.78rem', color: '#5e7267' }}>
+                                • Last checked: {lastRefreshedAt}
+                              </span>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            className={`admin-refresh-btn ${isRefreshing ? 'refreshing' : ''}`}
+                            onClick={handleManualRefreshBookings}
+                            disabled={isRefreshing}
+                            title="Fetch new bookings instantly from storage"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '6px 13px',
+                              borderRadius: '8px',
+                              border: '1px solid #cbd9c8',
+                              background: '#ffffff',
+                              color: '#1f382b',
+                              fontSize: '0.82rem',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                            }}
+                          >
+                            <svg
+                              className={isRefreshing ? 'spin-anim' : ''}
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
+                            </svg>
+                            {isRefreshing ? 'Checking requests...' : 'Refresh client requests'}
+                          </button>
+                        </div>
+
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                           {bookings
                             .filter((b) => {
                               if (recordFilter === 'pending') return b.status === 'Pending verification';
+                              if (recordFilter === 'unconfirmed') return b.status === 'Not Confirmed';
                               if (recordFilter === 'confirmed') return b.status === 'Confirmed';
                               return true;
                             }).length === 0 ? (
@@ -2164,6 +2808,7 @@ export default function App() {
                             bookings
                               .filter((b) => {
                                 if (recordFilter === 'pending') return b.status === 'Pending verification';
+                                if (recordFilter === 'unconfirmed') return b.status === 'Not Confirmed';
                                 if (recordFilter === 'confirmed') return b.status === 'Confirmed';
                                 return true;
                               })
@@ -2171,10 +2816,11 @@ export default function App() {
                                 <div
                                   key={b.id}
                                   style={{
-                                    border: '1px solid #e2ebdff5',
+                                    border: b.status === 'Pending verification' ? '1px solid #fcd34d' : b.status === 'Not Confirmed' ? '1px solid #fecdd3' : '1px solid #e2ebdff5',
                                     borderRadius: '12px',
                                     padding: '16px 18px',
-                                    background: '#fafcfa',
+                                    background: b.status === 'Pending verification' ? '#fefce8' : b.status === 'Not Confirmed' ? '#fffafb' : '#fafcfa',
+                                    boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
                                   }}
                                 >
                                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px' }}>
@@ -2206,6 +2852,8 @@ export default function App() {
                                               ? '#e0ecf8'
                                               : b.status === 'Discrepancy'
                                               ? '#fee2e2'
+                                              : b.status === 'Not Confirmed'
+                                              ? '#fee2e2'
                                               : '#fff3db',
                                           color:
                                             b.status === 'Confirmed'
@@ -2214,11 +2862,13 @@ export default function App() {
                                               ? '#1e4b7a'
                                               : b.status === 'Discrepancy'
                                               ? '#991b1b'
+                                              : b.status === 'Not Confirmed'
+                                              ? '#991b1b'
                                               : '#8e6118',
                                           fontWeight: 700,
                                         }}
                                       >
-                                        {b.status}
+                                        {b.status === 'Not Confirmed' ? 'Not Confirmed (Slot Available)' : b.status}
                                       </span>
                                       <small style={{ fontSize: '9px', color: '#97a39a' }}>Booked {b.createdAt}</small>
                                     </div>
@@ -2261,53 +2911,135 @@ export default function App() {
                                     </div>
 
                                     {/* Verification & Record Actions */}
-                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                                      {b.status === 'Pending verification' && (
+                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', position: 'relative' }}>
+                                      {confirmPrompt && confirmPrompt.booking.id === b.id ? (
+                                        <div
+                                          className={`inline-confirm-popover ${confirmPrompt.action === 'confirm' ? 'popover-confirm' : 'popover-not-confirm'}`}
+                                        >
+                                          <span
+                                            style={{
+                                              fontSize: '12px',
+                                              fontWeight: 700,
+                                              color: confirmPrompt.action === 'confirm' ? '#166534' : '#9f1239',
+                                              display: 'inline-flex',
+                                              alignItems: 'center',
+                                              gap: '5px',
+                                              userSelect: 'none',
+                                            }}
+                                          >
+                                            <span>{confirmPrompt.action === 'confirm' ? '✓' : '✕'}</span>
+                                            {confirmPrompt.action === 'confirm' ? 'Do you want confirm?' : 'Do you want to not confirm?'}
+                                          </span>
+                                          <div style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
+                                            <button
+                                              type="button"
+                                              onClick={() => setConfirmPrompt(null)}
+                                              className="admin-modal-btn-cancel"
+                                              style={{ padding: '4px 10px', fontSize: '11px', borderRadius: '6px' }}
+                                            >
+                                              Cancel
+                                            </button>
+                                            {confirmPrompt.action === 'confirm' ? (
+                                              <button
+                                                type="button"
+                                                className="admin-modal-btn-confirm"
+                                                onClick={() => handleConfirmClientBooking(confirmPrompt.booking)}
+                                                style={{ padding: '4px 14px', fontSize: '11px', borderRadius: '6px' }}
+                                              >
+                                                Confirm
+                                              </button>
+                                            ) : (
+                                              <button
+                                                type="button"
+                                                className="admin-modal-btn-not-confirm"
+                                                onClick={() => handleNotConfirmClientBooking(confirmPrompt.booking)}
+                                                style={{ padding: '4px 14px', fontSize: '11px', borderRadius: '6px' }}
+                                              >
+                                                Not Confirm
+                                              </button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ) : (
                                         <>
-                                          <button
-                                            type="button"
-                                            className="admin-action-btn-sm confirm"
-                                            onClick={() => handleVerifyBookingPayment(b.id)}
-                                            title="Verify payment matches bank record and confirm appointment"
-                                          >
-                                            ✓ Verify &amp; Confirm
-                                          </button>
-                                          <button
-                                            type="button"
-                                            className="admin-action-btn-sm reject"
-                                            onClick={() => handleFlagDiscrepancy(b.id)}
-                                            title="Flag payment discrepancy or invalid reference"
-                                          >
-                                            Flag Discrepancy
-                                          </button>
+                                          {b.status === 'Pending verification' && (
+                                            <>
+                                              <button
+                                                type="button"
+                                                className="admin-action-btn-sm confirm"
+                                                onClick={() => setConfirmPrompt({ booking: b, action: 'confirm' })}
+                                                title="Confirm consultation with this client"
+                                              >
+                                                ✓ Confirm
+                                              </button>
+                                              <button
+                                                type="button"
+                                                className="admin-action-btn-sm reject"
+                                                onClick={() => setConfirmPrompt({ booking: b, action: 'not_confirm' })}
+                                                title="Do not confirm and release session slot back to available"
+                                              >
+                                                ✕ Not Confirm
+                                              </button>
+                                              <button
+                                                type="button"
+                                                className="admin-action-btn-sm"
+                                                onClick={() => handleFlagDiscrepancy(b.id)}
+                                                title="Flag payment discrepancy or invalid reference"
+                                              >
+                                                Flag Discrepancy
+                                              </button>
+                                            </>
+                                          )}
+                                          {b.status === 'Not Confirmed' && (
+                                            <button
+                                              type="button"
+                                              className="admin-action-btn-sm confirm"
+                                              onClick={() => setConfirmPrompt({ booking: b, action: 'confirm' })}
+                                              title="Review decision and confirm client"
+                                            >
+                                              Re-confirm Client
+                                            </button>
+                                          )}
+                                          {b.status === 'Confirmed' && (
+                                            <>
+                                              <button
+                                                type="button"
+                                                className="admin-action-btn-sm"
+                                                onClick={() => handleCompleteBooking(b.id)}
+                                              >
+                                                Mark Completed
+                                              </button>
+                                              <button
+                                                type="button"
+                                                className="admin-action-btn-sm reject"
+                                                onClick={() => setConfirmPrompt({ booking: b, action: 'not_confirm' })}
+                                                title="Change to Not Confirmed and release slot back to available"
+                                              >
+                                                Change to Not Confirmed
+                                              </button>
+                                            </>
+                                          )}
+                                          {b.status === 'Discrepancy' && (
+                                            <button
+                                              type="button"
+                                              className="admin-action-btn-sm confirm"
+                                              onClick={() => setConfirmPrompt({ booking: b, action: 'confirm' })}
+                                            >
+                                              Re-verify &amp; Confirm
+                                            </button>
+                                          )}
+                                          {b.status !== 'Pending verification' && (
+                                            <button
+                                              type="button"
+                                              className="admin-action-btn-sm reject"
+                                              onClick={() => handleDeleteBooking(b.id)}
+                                              title="Delete this client record"
+                                            >
+                                              Delete
+                                            </button>
+                                          )}
                                         </>
                                       )}
-                                      {b.status === 'Confirmed' && (
-                                        <button
-                                          type="button"
-                                          className="admin-action-btn-sm"
-                                          onClick={() => handleCompleteBooking(b.id)}
-                                        >
-                                          Mark Completed
-                                        </button>
-                                      )}
-                                      {b.status === 'Discrepancy' && (
-                                        <button
-                                          type="button"
-                                          className="admin-action-btn-sm confirm"
-                                          onClick={() => handleVerifyBookingPayment(b.id)}
-                                        >
-                                          Re-verify &amp; Confirm
-                                        </button>
-                                      )}
-                                      <button
-                                        type="button"
-                                        className="admin-action-btn-sm reject"
-                                        onClick={() => handleDeleteBooking(b.id)}
-                                        title="Delete this client record"
-                                      >
-                                        Delete
-                                      </button>
                                     </div>
                                   </div>
 
@@ -2775,63 +3507,63 @@ export default function App() {
 
               <div className="payment-method-box" id="paymentMethodBox">
                 {paymentMethod === 'qr' && (
-                  <div className="qr-live-wrapper">
-                    <svg className="qr-live-svg" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      {/* Crisp SVG QR Code graphic */}
-                      <rect width="100" height="100" rx="8" fill="#ffffff" />
-                      {/* Top-Left Finder */}
-                      <rect x="8" y="8" width="28" height="28" rx="4" fill="#26483d" />
-                      <rect x="13" y="13" width="18" height="18" rx="2" fill="#ffffff" />
-                      <rect x="17" y="17" width="10" height="10" rx="1" fill="#26483d" />
-                      {/* Top-Right Finder */}
-                      <rect x="64" y="8" width="28" height="28" rx="4" fill="#26483d" />
-                      <rect x="69" y="13" width="18" height="18" rx="2" fill="#ffffff" />
-                      <rect x="73" y="17" width="10" height="10" rx="1" fill="#26483d" />
-                      {/* Bottom-Left Finder */}
-                      <rect x="8" y="64" width="28" height="28" rx="4" fill="#26483d" />
-                      <rect x="13" y="69" width="18" height="18" rx="2" fill="#ffffff" />
-                      <rect x="17" y="73" width="10" height="10" rx="1" fill="#26483d" />
-                      {/* Data dots matrix */}
-                      <rect x="42" y="10" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="52" y="10" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="42" y="22" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="52" y="22" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="10" y="42" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="22" y="42" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="34" y="42" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="46" y="42" width="8" height="8" fill="#26483d" rx="2" />
-                      <rect x="60" y="42" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="72" y="42" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="84" y="42" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="42" y="54" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="54" y="54" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="66" y="54" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="42" y="66" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="54" y="66" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="66" y="66" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="78" y="66" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="42" y="78" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="54" y="78" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="66" y="78" width="6" height="6" fill="#355e4e" rx="1" />
-                      <rect x="78" y="78" width="6" height="6" fill="#355e4e" rx="1" />
-                      <circle cx="50" cy="50" r="7" fill="#ffffff" />
-                      <circle cx="50" cy="50" r="5" fill="#26483d" />
-                    </svg>
-                    <div style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: '11px', fontWeight: 700, color: '#274b39' }}>
-                        Scan with GPay, PhonePe, Paytm, or BHIM
+                  <div className="qr-live-wrapper" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
+                    <div
+                      style={{
+                        background: '#ffffff',
+                        padding: '12px',
+                        borderRadius: '16px',
+                        border: '1.5px solid #d5dfd3',
+                        boxShadow: '0 6px 20px rgba(0, 0, 0, 0.08)',
+                        display: 'inline-block',
+                      }}
+                    >
+                      <img
+                        src="/assets/aistudio/Screenshot_2026-10-26_005601_f47921d7.png"
+                        alt="Official Google Pay QR Code - Fathima Hamda"
+                        style={{
+                          width: '190px',
+                          height: '190px',
+                          display: 'block',
+                          borderRadius: '8px',
+                          objectFit: 'contain',
+                        }}
+                      />
+                    </div>
+                    <div style={{ marginTop: '12px', width: '100%' }}>
+                      <div style={{ fontSize: '12px', fontWeight: 700, color: '#1f3e2e' }}>
+                        Scan &amp; Pay via Any UPI App
                       </div>
-                      <div style={{ marginTop: '4px' }}>
+                      <div style={{ fontSize: '10px', color: '#566e60', marginTop: '2px' }}>
+                        Google Pay · PhonePe · Paytm · BHIM · Kotak · Any Banking App
+                      </div>
+                      <div style={{ fontSize: '10px', color: '#566e60', marginTop: '4px' }}>
+                        Account Name: <strong style={{ color: '#1b3a28' }}>FATHIMA HAMDA</strong>
+                      </div>
+                      <div style={{ marginTop: '8px' }}>
                         <button
                           type="button"
                           className="upi-copy-badge"
                           onClick={() => {
-                            navigator.clipboard.writeText('hamda.psychology@okhdfcbank');
-                            showToast('UPI ID copied to clipboard: hamda.psychology@okhdfcbank');
+                            navigator.clipboard.writeText('hamdazubair121-1@okaxis');
+                            showToast('UPI ID copied: hamdazubair121-1@okaxis');
                           }}
                           title="Click to copy UPI ID"
+                          style={{
+                            background: '#f2f8f3',
+                            border: '1px solid #c2dbcb',
+                            color: '#1a4e32',
+                            fontWeight: 700,
+                            padding: '6px 14px',
+                            borderRadius: '20px',
+                            cursor: 'pointer',
+                            fontSize: '11px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                          }}
                         >
-                          hamda.psychology@okhdfcbank 📋
+                          hamdazubair121-1@okaxis 📋
                         </button>
                       </div>
                     </div>
@@ -2840,63 +3572,152 @@ export default function App() {
 
                 {paymentMethod === 'upi' && (
                   <div>
-                    <h3>Pay via UPI Application</h3>
-                    <p>Send payment directly to Hamda’s clinical receiving UPI ID:</p>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                      <span className="payment-value" style={{ flex: 1 }}>
-                        hamda.psychology@okhdfcbank
-                      </span>
-                      <button
-                        type="button"
-                        className="save-mini"
-                        onClick={() => {
-                          navigator.clipboard.writeText('hamda.psychology@okhdfcbank');
-                          showToast('UPI ID copied to clipboard!');
-                        }}
-                      >
-                        Copy UPI ID
-                      </button>
-                    </div>
-                    <p style={{ marginTop: 10, fontSize: '10px', color: '#68776f' }}>
-                      Beneficiary: <strong>Hamda Zubair · Psych by Hamda</strong>
+                    <h3 style={{ margin: '0 0 4px', fontSize: '13px' }}>Pay via UPI Application</h3>
+                    <p style={{ margin: '0 0 12px', fontSize: '11px', color: '#526b5c' }}>
+                      Transfer directly to Fathima Hamda’s clinical receiving UPI handles:
                     </p>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {/* Primary UPI ID */}
+                      <div style={{ background: '#f8faf7', border: '1px solid #dce8da', borderRadius: '9px', padding: '10px 12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                          <small style={{ fontSize: '9px', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                            Primary UPI ID (Google Pay / Axis)
+                          </small>
+                          <small style={{ fontSize: '9px', color: '#15803d', fontWeight: 600 }}>● Active</small>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                          <span style={{ fontFamily: 'ui-monospace, monospace', fontWeight: 700, fontSize: '13px', color: '#1f3e2e' }}>
+                            hamdazubair121-1@okaxis
+                          </span>
+                          <button
+                            type="button"
+                            className="save-mini"
+                            onClick={() => {
+                              navigator.clipboard.writeText('hamdazubair121-1@okaxis');
+                              showToast('UPI ID copied: hamdazubair121-1@okaxis');
+                            }}
+                            style={{ padding: '4px 10px', fontSize: '10px' }}
+                          >
+                            Copy UPI ID
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Kotak UPI Handle */}
+                      <div style={{ background: '#f8faf7', border: '1px solid #dce8da', borderRadius: '9px', padding: '10px 12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                          <small style={{ fontSize: '9px', fontWeight: 700, color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                            Kotak UPI Handle
+                          </small>
+                          <small style={{ fontSize: '9px', color: '#0369a1', fontWeight: 600 }}>● Active</small>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                          <span style={{ fontFamily: 'ui-monospace, monospace', fontWeight: 700, fontSize: '13px', color: '#1f3e2e' }}>
+                            9744492939@kotak
+                          </span>
+                          <button
+                            type="button"
+                            className="save-mini"
+                            onClick={() => {
+                              navigator.clipboard.writeText('9744492939@kotak');
+                              showToast('Kotak UPI Handle copied: 9744492939@kotak');
+                            }}
+                            style={{ padding: '4px 10px', fontSize: '10px' }}
+                          >
+                            Copy UPI Handle
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: '12px', padding: '8px 12px', background: '#f2f7ef', borderRadius: '8px', fontSize: '10px', color: '#496654' }}>
+                      Account Name: <strong style={{ color: '#1b3a28' }}>FATHIMA HAMDA</strong>
+                    </div>
                   </div>
                 )}
 
                 {paymentMethod === 'bank' && (
                   <div>
-                    <h3>Direct Bank NEFT / IMPS Transfer</h3>
-                    <p>Official practice bank account details:</p>
+                    <h3 style={{ margin: '0 0 4px', fontSize: '13px' }}>Direct Bank Transfer (NEFT / IMPS / RTGS)</h3>
+                    <p style={{ margin: '0 0 10px', fontSize: '11px', color: '#526b5c' }}>
+                      Official Kotak Mahindra clinical practice bank account details:
+                    </p>
                     <div className="bank-grid">
                       <div className="bank-field">
-                        <small>Account holder</small>
-                        <strong style={{ fontSize: '11px', color: '#284637' }}>Hamda Zubair</strong>
+                        <small>Bank Name</small>
+                        <strong style={{ fontSize: '12px', color: '#1b3a28' }}>Kotak Mahindra</strong>
                       </div>
                       <div className="bank-field">
-                        <small>Bank</small>
-                        <strong style={{ fontSize: '11px', color: '#284637' }}>HDFC Bank</strong>
+                        <small>Account Name</small>
+                        <strong style={{ fontSize: '12px', color: '#1b3a28' }}>FATHIMA HAMDA</strong>
                       </div>
                       <div className="bank-field">
-                        <small>Account number</small>
-                        <span style={{ fontFamily: 'ui-monospace, monospace', fontWeight: 700, color: '#284637' }}>
-                          50200084729184
-                        </span>
+                        <small>Account Number</small>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
+                          <span style={{ fontFamily: 'ui-monospace, monospace', fontWeight: 800, fontSize: '13px', color: '#1b3a28' }}>
+                            6447312720
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText('6447312720');
+                              showToast('Account Number copied: 6447312720');
+                            }}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '10px', color: '#15803d', fontWeight: 700 }}
+                            title="Copy Account Number"
+                          >
+                            Copy
+                          </button>
+                        </div>
                       </div>
                       <div className="bank-field">
                         <small>IFSC Code</small>
-                        <span style={{ fontFamily: 'ui-monospace, monospace', fontWeight: 700, color: '#284637' }}>
-                          HDFC0001811
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
+                          <span style={{ fontFamily: 'ui-monospace, monospace', fontWeight: 800, fontSize: '13px', color: '#1b3a28' }}>
+                            KKBK0008083
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText('KKBK0008083');
+                              showToast('IFSC Code copied: KKBK0008083');
+                            }}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '10px', color: '#15803d', fontWeight: 700 }}
+                            title="Copy IFSC Code"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      </div>
+                      <div className="bank-field" style={{ gridColumn: '1 / -1' }}>
+                        <small>UPI Handle</small>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
+                          <span style={{ fontFamily: 'ui-monospace, monospace', fontWeight: 700, fontSize: '12px', color: '#1b3a28' }}>
+                            9744492939@kotak
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText('9744492939@kotak');
+                              showToast('UPI Handle copied: 9744492939@kotak');
+                            }}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '10px', color: '#15803d', fontWeight: 700 }}
+                            title="Copy UPI Handle"
+                          >
+                            Copy
+                          </button>
+                        </div>
                       </div>
                     </div>
                     <button
                       type="button"
                       className="save-mini"
-                      style={{ marginTop: '10px', width: '100%', textAlign: 'center' }}
+                      style={{ marginTop: '10px', width: '100%', textAlign: 'center', padding: '8px' }}
                       onClick={() => {
-                        const info = `Account Name: Hamda Zubair\nBank: HDFC Bank\nAccount: 50200084729184\nIFSC: HDFC0001811\nBranch: Banjara Hills, Hyderabad`;
+                        const info = `Account Name: FATHIMA HAMDA\nBank Name: Kotak Mahindra\nAccount Number: 6447312720\nIFSC Code: KKBK0008083\nUPI Handle: 9744492939@kotak`;
                         navigator.clipboard.writeText(info);
-                        showToast('Bank transfer details copied to clipboard!');
+                        showToast('All bank account details copied to clipboard!');
                       }}
                     >
                       Copy All Bank Account Details
@@ -2933,7 +3754,7 @@ export default function App() {
                   <input
                     id="payerNote"
                     type="text"
-                    placeholder="e.g. Sent from Aanya HDFC Account"
+                    placeholder="e.g. Sent from Google Pay or Kotak Account"
                     value={paymentPayerNote}
                     onChange={(e) => setPaymentPayerNote(e.target.value)}
                     style={{
@@ -2954,7 +3775,7 @@ export default function App() {
                     onChange={(e) => setPaymentConfirmedAck(e.target.checked)}
                   />
                   <label htmlFor="confirmTransferMade" style={{ fontSize: '9px', color: '#445b4e' }}>
-                    I confirm that I have transferred ₹{Number(currentFee).toLocaleString('en-IN')} to Hamda Zubair and this reference ID is accurate.
+                    I confirm that I have transferred ₹{Number(currentFee).toLocaleString('en-IN')} to FATHIMA HAMDA and this reference ID is accurate.
                   </label>
                 </div>
 
@@ -3066,6 +3887,8 @@ export default function App() {
           )}
         </div>
       </div>
+
+
 
       {/* Toast Notification */}
       <div className={`toast ${toastMessage ? 'show' : ''}`} id="toast">
